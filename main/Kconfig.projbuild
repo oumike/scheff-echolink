@@ -1,0 +1,44 @@
+menu "EchoLink Client"
+
+    config EL_CALLSIGN
+        string "Default callsign"
+        default ""
+        help
+            Your EchoLink-validated callsign. Can be changed at runtime with
+            the console command "set callsign <CALL>" (stored in NVS).
+
+    config EL_PASSWORD
+        string "Default EchoLink password"
+        default ""
+
+    config EL_NAME
+        string "Default operator name"
+        default ""
+
+    config EL_LOCATION
+        string "Default location/description"
+        default "T-Display-P4"
+        help
+            Shown in the EchoLink directory next to your callsign.
+
+    config EL_DIRECTORY_SERVER
+        string "Directory server"
+        default "servers.echolink.org"
+
+    config EL_WIFI_SSID
+        string "Default Wi-Fi SSID"
+        default ""
+
+    config EL_WIFI_PASSWORD
+        string "Default Wi-Fi password"
+        default ""
+
+    config EL_ACCEPT_INCOMING
+        bool "Accept incoming connections by default"
+        default y
+        help
+            Incoming connections are only accepted from stations present in
+            the downloaded directory list, and only while idle. Stations
+            behind NAT need UDP 5198-5199 forwarded to the device.
+
+endmenu
