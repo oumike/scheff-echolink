@@ -16,6 +16,7 @@
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "net_wifi.h"
+#include "server_list.h"
 #include "settings.h"
 
 static const char *TAG = "el_dir";
@@ -34,6 +35,7 @@ static size_t s_count;
 static volatile el_dir_status_t s_want = EL_DIR_ONLINE;
 static volatile el_dir_status_t s_status = EL_DIR_OFFLINE;
 static volatile bool s_logged_in;
+static volatile bool s_relogin;
 
 static int dir_connect(void)
 {
@@ -227,6 +229,9 @@ esp_err_t el_dir_fetch_list(void)
         return ESP_FAIL;
     }
 
+    // First download on this device: saves echolink-default-servers.xml.
+    server_list_on_directory(list, n);
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
     free(s_list);
     s_list = list;
@@ -245,6 +250,10 @@ static void dir_task(void *arg)
         if (!net_wifi_has_ip()) continue;
 
         TickType_t now = xTaskGetTickCount();
+        if (s_relogin) {
+            s_relogin = false;
+            next_login = now;
+        }
         el_dir_status_t want = s_want;
         if (want != sent || (want != EL_DIR_OFFLINE && (int32_t)(now - next_login) >= 0)) {
             if (el_dir_login(want) == ESP_OK) {
@@ -266,12 +275,20 @@ void el_dir_start(void)
 {
     s_lock = xSemaphoreCreateMutex();
     s_io_lock = xSemaphoreCreateMutex();
-    xTaskCreate(dir_task, "el_dir", 6144, NULL, 5, &s_task);
+    // Roomy: the first list also writes the server snapshot (stdio + FAT).
+    xTaskCreate(dir_task, "el_dir", 10240, NULL, 5, &s_task);
 }
 
 void el_dir_set_status(el_dir_status_t status)
 {
     s_want = status;
+    if (s_task) xTaskNotifyGive(s_task);
+}
+
+void el_dir_relogin(void)
+{
+    s_logged_in = false;
+    s_relogin = true;
     if (s_task) xTaskNotifyGive(s_task);
 }
 

@@ -24,3 +24,21 @@ CONFIG_ESP_HOSTED_AUTO_INIT=n
 CONFIG_ESP_WIFI_NVS_ENABLED=n
 
 CONFIG_LWIP_SNTP_MAX_SERVERS=2
+
+# LVGL on the 568x1232 AMOLED. Widgets are allocated in PSRAM (main/lv_mem_psram.c)
+# rather than LVGL's small built-in pool, so long node lists can't exhaust
+# internal RAM. Fonts are big enough to read and touch at ~330 ppi.
+CONFIG_LV_USE_CUSTOM_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_36=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_28=y
+CONFIG_LV_THEME_DEFAULT_DARK=y
+
+# Long file names for echolink-default-servers.xml / echolink-servers.xml.
+CONFIG_FATFS_LFN_HEAP=y
+
+# Web config: phones' captive-portal probes send long headers.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024

@@ -17,6 +17,7 @@ menu "EchoLink Client"
 
     config EL_LOCATION
         string "Default location/description"
+        default "T-Deck Plus" if IDF_TARGET_ESP32S3
         default "T-Display-P4"
         help
             Shown in the EchoLink directory next to your callsign.

@@ -1,12 +1,14 @@
 # echolink-p4
 
-An EchoLink client for the **LilyGO T-Display-P4** (ESP32-P4). It uses the
-board's own ES8311 codec, electret mic and speaker, so you can connect to
-EchoLink stations, links, repeaters and conferences without a PC.
+An EchoLink client for the **LilyGO T-Display-P4** (ESP32-P4) and **LilyGO
+T-Deck Plus** (ESP32-S3). It uses each board's onboard display, microphone,
+speaker and Wi-Fi hardware so you can connect to EchoLink stations, links,
+repeaters and conferences without a PC.
 
-**Status: early and not yet tested on hardware.** It builds cleanly with
-ESP-IDF v5.5.4. The protocol pieces were checked on the host (see
-[Verification](#verification)). It has not run on a board yet.
+**Status: early and not yet tested on hardware.** The T-Display-P4 build has
+been compiled with ESP-IDF v5.5.4; the T-Deck Plus target has not yet had a
+full build or hardware verification. The protocol pieces were checked on the
+host (see [Verification](#verification)).
 
 ## What works (in code)
 
@@ -19,7 +21,8 @@ ESP-IDF v5.5.4. The protocol pieces were checked on the host (see
   - info and chat text
 - Full audio path at 8 kHz mono: mic → GSM encode → UDP, and UDP → GSM
   decode → 240 ms jitter buffer → speaker.
-- Half-duplex PTT: hold the **BOOT** button, or use the `ptt` console command.
+- Half-duplex PTT: hold **BOOT** on T-Display-P4, hold **Space** on T-Deck
+  Plus, or use the `ptt` console command.
 - Serial console for setup and operation. Settings are saved in NVS.
 - Mic → speaker loopback mode for testing the audio hardware.
 
@@ -40,8 +43,24 @@ Wi-Fi uses **ESP-Hosted** through LilyGO's fork, which is a submodule in
 because the C6 EN line is on the I/O expander. The C6 must run the matching
 ESP-Hosted slave firmware. The LilygoBox factory image already uses it. If
 you've flashed something else onto the C6, reflash the network-adapter image
-from the [LilygoBox releases](https://github.com/Xinyuan-LilyGO/lilygobox-espidf/releases/latest).
+from the [LilygoBox releases](https://github.com/Xinyuan-LilyGO/lilygobox-espidf/releases/latest),
+or run `scripts/flash-c6.sh <port> [image.bin]` over the C6's UART connector.
+If you don't give an image, the script uses the ESP-Hosted v2.12 C6 image that
+ships with PlatformIO's Arduino-ESP32.
 The T-Display-P4 README explains the procedure.
+
+## Hardware notes (T-Deck Plus)
+
+| Function | Details |
+| --- | --- |
+| Display | ST7789 320x240 landscape LCD with GT911 touch |
+| Audio | ES7210 microphone ADC on I2S1; I2S speaker on I2S0 |
+| Wi-Fi | Native ESP32-S3 Wi-Fi |
+| PTT | Hold the keyboard Space bar; raw keyboard matrix mode provides press and release state |
+| Storage | microSD over the display's shared SPI2 bus |
+
+The Plus uses the original T-Deck peripheral pin map; its integrated GPS does
+not change the display, keyboard, audio, SD or battery connections used here.
 
 ## Build
 
@@ -53,13 +72,131 @@ idf.py menuconfig                     # optional: EchoLink Client -> defaults
 idf.py build flash monitor
 ```
 
+Or build with PlatformIO, the way camillia-mt does. PlatformIO downloads and
+manages ESP-IDF itself, so you don't need a separate install:
+
+```bash
+scripts/build-upload-monitor.sh                 # build + flash + monitor
+scripts/build-upload-monitor.sh --tdeck-plus    # select T-Deck Plus
+scripts/build-upload-monitor.sh --tdisplay-p4   # explicitly select T-Display-P4
+scripts/build-upload-monitor.sh --port /dev/cu.usbmodem1101
+scripts/build-upload-monitor.sh --just-build    # compile only, no board needed
+scripts/build-upload-monitor.sh --fullclean     # fullclean first
+scripts/build-upload-monitor.sh --erase         # erase flash first (wipes settings)
+```
+
+Notes:
+
+- Both targets use the script's separate PlatformIO core
+  (`~/.platformio-p4`). This stops other projects' `espressif32` versions from
+  replacing the pioarduino platform.
+- ESP-IDF won't use a build directory whose path has a space in it, so the
+  build goes to `~/.platformio-p4/build/echolink-p4` instead.
+- `sdkconfig.pio.defaults` selects the board's ECO2 (pre-v3) P4 silicon.
+
 On an aarch64 Linux host, Espressif doesn't ship a ninja binary. Run
 `pip install ninja` inside the IDF Python env.
 
 If boot fails with a chip-revision error, your P4 is older than v3.x. Enable
 `ESP32P4_SELECTS_REV_LESS_V3` in menuconfig.
 
-## First-time setup (serial console)
+## Touch UI
+
+The LVGL 9 UI uses the T-Display-P4's 568x1232 RM69A10/GT9895 display or the
+T-Deck Plus's 320x240 ST7789/GT911 display. The T-Deck target uses compact
+fonts and controls, and scrolls workflows that do not fit in one viewport.
+
+- **Wi-Fi Setup** appears on first boot, or after an erase when no network is
+  saved. You can:
+  - tap **Scan for networks** and pick one from the list, or
+  - type the network name yourself.
+
+  Enter the password (it's shown, not masked; open networks need none) and
+  tap **Join**. A status box shows *Connecting...* then *Connected!*, and a
+  second later the next step opens.
+- **EchoLink Account** comes next in onboarding. Enter your callsign and
+  EchoLink password (masked); name and location are optional.
+- **Home** is where the device boots once onboarding is done. Your callsign is
+  at the top, with an **Edit** button under it that changes the account.
+  Saving logs in to the directory again straight away.
+  - **Search** by callsign, description or node number, or pick a letter
+    (A-Z, 0-9) to list the known nodes starting with it. **`*`** lists your
+    favorites; Home opens on it when you have some. Lists show 20 per page.
+  - **Tap** a node to connect to it.
+  - Tap a node's **gear** (on the right) for a menu: **Edit** it, or
+    **Favorite** / **Unfavorite** it. Favorites show in gold.
+  - **Create Manual** adds a node by hand. You enter the callsign, node
+    number, a description, and optionally a host or IP address to connect to
+    directly.
+- **PTT:** hold the P4's **BOOT** button or the T-Deck Plus **Space** bar
+  anywhere. In Chat it lights the talk button like the on-screen one does.
+- **Chat** opens once connected:
+  - It shows the station and the info text it sends when you connect.
+  - The large button is **green** when you can talk; hold it to transmit.
+  - It turns **red** while someone else is talking.
+  - **Leave** disconnects and returns to Home.
+
+### Web config
+
+You can do the same onboarding from a phone or computer.
+
+- **Until Wi-Fi connects**, the device runs an open setup hotspot (no password)
+  named `EchoLink-P4-XXXX` or `EchoLink-TDeck-XXXX`. Join it and phones open the setup page by
+  themselves; otherwise browse to `http://192.168.4.1`. Because it's open,
+  the Wi-Fi and EchoLink passwords you enter there cross the air
+  unencrypted.
+- **What the page does:** it scans for or accepts a Wi-Fi network, and saves
+  the EchoLink account. After the initial Wi-Fi connection succeeds, the
+  device saves the network and restarts before continuing account setup.
+- **After station Wi-Fi gets an IP address**, the hotspot stays up for another
+  minute so the page can show the device's new address, then turns off. The page stays
+  available at `http://<device IP>` on your network, and Home shows that
+  address.
+
+The page also manages servers:
+
+- **Servers:** search, or pick a letter (`*` for favorites) to list the saved
+  servers. ☆/★ toggles a favorite. You can add, edit or
+  delete one; changes go to `echolink-servers.xml`, and the device's list
+  updates straight away.
+- **Backup:**
+  - **Download complete backup** saves `echolink-p4-backup.xml` to your
+    computer. It includes every persisted setting and the working server list.
+  - **Import a backup** restores those settings and replaces the server list.
+    Legacy `echolink-servers.xml` files remain importable and leave settings
+    unchanged.
+  - **Export to SD card** and **Import from SD card** use
+    `echolink-p4-backup.xml` at the root of a FAT-formatted microSD card.
+
+  The complete backup includes Wi-Fi and EchoLink passwords in readable form,
+  so store it securely. Favorites are saved in the file (`favorite="true"`),
+  so they travel with exports and imports. An import replaces the working
+  list; the default list is never touched. Complete backups may contain an
+  empty server list; legacy files with no `<server>` entries are rejected.
+
+The page never displays saved passwords, but complete backup exports contain
+them. Leaving the EchoLink password blank keeps the saved one. The page has no
+login, so anyone on your network can reach it.
+
+### Server lists
+
+Known nodes (conferences, links and repeaters) are stored as XML on a 4 MB
+FAT partition in internal flash, mounted at `/data`:
+
+| File | Purpose |
+| --- | --- |
+| `echolink-default-servers.xml` | Snapshot taken from the first EchoLink directory download. It's written once and never edited, and serves as the backup. |
+| `echolink-servers.xml` | Working copy, created from the default. Home reads it; manual entries and edits are saved to it. |
+
+Each node is an element like
+`<server call="*ECHOTEST*" node="9999" type="conference" desc="..." ip="..." host=""/>`.
+`ip` is the address last seen in the directory. EchoLink addresses change, so
+connecting still looks the station up in the live directory, unless the entry
+has a fixed `host`.
+
+## Serial console
+
+Everything above can also be set from the serial console:
 
 ```
 echolink> wifi MySSID MyPassword
@@ -81,7 +218,7 @@ that IP.
 ```
 echolink> list ECHOTEST            # search the directory
 echolink> connect *ECHOTEST*       # or: c 9999, or: c 1.2.3.4
-  (hold BOOT to talk; ECHOTEST plays it back)
+  (hold BOOT on T-Display-P4 or Space on T-Deck Plus to talk; ECHOTEST plays it back)
 echolink> chat hello               # text chat
 echolink> dc                       # disconnect
 echolink> set volume 60
@@ -114,9 +251,16 @@ main/
   net_wifi.c/.h    ESP-Hosted bring-up, STA connect, SNTP
   el_directory.*   directory login + station list (TCP 5200)
   el_qso.*         QSO state machine, RTCP, GSM audio, chat (UDP 5198/5199)
-  ptt.c/.h         BOOT button hold-to-talk
+  ptt.c/.h         Board button/keyboard hold-to-talk
   console_cmds.*   serial REPL
   settings.*       NVS-backed configuration
+  display.*        RM69A10 MIPI-DSI panel + GT9895 touch, LVGL port
+  lv_mem_psram.c   LVGL allocations in PSRAM
+  server_list.*    known-node XML lists on the /data FAT partition
+  ui*.c            LVGL screens: Wi-Fi setup, account, Home, Chat
+  onboard.*        onboarding state shared by the screen and the web config
+  web_config.c     setup hotspot, captive DNS and HTTP API; page in web/index.html
+  sdcard.*         microSD (SDMMC slot 0, 4-bit) at /sdcard
 components/gsm     libgsm 1.0.22 (TU Berlin), unmodified, see COPYRIGHT
 third_party/esp_hosted  LilyGO ESP-Hosted fork (submodule)
 ```
@@ -139,7 +283,6 @@ Not verified yet: anything on hardware. That includes codec levels, I2S at
 
 ## Next steps
 
-- LVGL UI on the MIPI-DSI panel (station list, touch PTT, RX/TX indicator)
 - Ethernet (IP101) as an alternative to Wi-Fi
 - Receive jitter handling that uses RTP sequence numbers (reorder/loss concealment)
 - Optional VOX, courtesy tone, AGC on the mic path

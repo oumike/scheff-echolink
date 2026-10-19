@@ -189,7 +189,13 @@ void console_start(void)
     reg("c", "Alias for connect", "<call | node | ip>", cmd_connect);
     reg("disconnect", "Hang up", NULL, cmd_disconnect);
     reg("dc", "Alias for disconnect", NULL, cmd_disconnect);
-    reg("ptt", "Toggle transmit (or hold the BOOT button)", "[on|off]", cmd_ptt);
+        reg("ptt",
+    #if CONFIG_IDF_TARGET_ESP32S3
+        "Toggle transmit (or hold the Space bar)",
+    #else
+        "Toggle transmit (or hold the BOOT button)",
+    #endif
+        "[on|off]", cmd_ptt);
     reg("chat", "Send a chat message", "<text>", cmd_chat);
     reg("loopback", "Mic to speaker loopback test", "[on|off]", cmd_loopback);
 

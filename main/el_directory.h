@@ -31,6 +31,9 @@ void el_dir_start(void);
 // Request a status change; applied immediately by the background task.
 void el_dir_set_status(el_dir_status_t status);
 el_dir_status_t el_dir_status(void);
+
+// Log in again now, e.g. after the callsign or password changed.
+void el_dir_relogin(void);
 bool el_dir_logged_in(void);
 
 // Synchronous; can take several seconds. Safe to call from the console.

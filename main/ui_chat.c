@@ -1,0 +1,300 @@
+// Connecting to a node, and the Chat screen while connected: station details,
+// a large hold-to-talk button (green: free to talk, red: someone else is
+// talking) and Leave.
+
+#include <stdio.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lwip/inet.h"
+#include "lwip/netdb.h"
+#include "audio.h"
+#include "display.h"
+#include "el_directory.h"
+#include "el_qso.h"
+#include "net_wifi.h"
+#include "settings.h"
+#include "ui_internal.h"
+
+#define CONNECT_TIMEOUT_MS 45000
+#define POLL_MS            100
+
+static server_entry_t s_target;
+static bool s_connecting;
+
+static lv_obj_t *s_scr, *s_name, *s_info, *s_volume_value, *s_talk, *s_talk_label;
+static lv_timer_t *s_poll;
+static char s_info_cache[512];
+static bool s_leaving;
+
+static void chat_show(void);
+
+// ---- connecting ------------------------------------------------------------
+
+static void connect_fail(const char *msg)
+{
+    display_lock();
+    ui_modal_message(msg, UI_COLOR_STOP, true, NULL);
+    display_unlock();
+    s_connecting = false;
+}
+
+// Picks what to hand el_qso_connect(): a fixed host for manual entries,
+// otherwise the callsign (or node number) as the directory knows it.
+static bool resolve_target(char *out, size_t size, char *err, size_t err_size)
+{
+    if (s_target.host[0]) {
+        struct addrinfo hints = {.ai_family = AF_INET}, *res = NULL;
+        if (getaddrinfo(s_target.host, NULL, &hints, &res) != 0 || !res) {
+            snprintf(err, err_size, "Couldn't look up\n%s", s_target.host);
+            return false;
+        }
+        strlcpy(out, inet_ntoa(((struct sockaddr_in *)res->ai_addr)->sin_addr), size);
+        freeaddrinfo(res);
+        return true;
+    }
+
+    if (!el_dir_count()) {
+        snprintf(err, err_size,
+                 "The EchoLink directory hasn't loaded yet.\n\nCheck that your callsign and password are set, "
+                 "then try again.");
+        return false;
+    }
+    el_station_t st;
+    if (el_dir_find(s_target.call, &st)) {
+        strlcpy(out, s_target.call, size);
+        return true;
+    }
+    if (s_target.node) {
+        char node[12];
+        snprintf(node, sizeof(node), "%lu", (unsigned long)s_target.node);
+        if (el_dir_find(node, &st)) {
+            strlcpy(out, node, size);
+            return true;
+        }
+    }
+    snprintf(err, err_size, "%s isn't online right now.", s_target.call);
+    return false;
+}
+
+static void connected_continue(void)
+{
+    chat_show();
+}
+
+static void connect_worker(void *arg)
+{
+    char target[64], err[160];
+    if (!net_wifi_has_ip()) {
+        connect_fail("Not connected to Wi-Fi.");
+        return;
+    }
+    if (!resolve_target(target, sizeof(target), err, sizeof(err))) {
+        connect_fail(err);
+        return;
+    }
+    esp_err_t e = el_qso_connect(target);
+    if (e != ESP_OK) {
+        connect_fail(e == ESP_ERR_INVALID_STATE ? "Already in a QSO. Leave it first." : "Couldn't start the connection.");
+        return;
+    }
+
+    qso_status_t st;
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(CONNECT_TIMEOUT_MS);
+    do {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        el_qso_get_status(&st);
+    } while (st.state == QSO_CONNECTING && (int32_t)(deadline - xTaskGetTickCount()) > 0);
+
+    if (st.state == QSO_CONNECTED) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), LV_SYMBOL_OK "  Connected!\n%s", s_target.call);
+        display_lock();
+        ui_modal_message(msg, UI_COLOR_GO_LIT, false, NULL);
+        ui_modal_close_after(1000, connected_continue);
+        display_unlock();
+    } else {
+        if (st.state == QSO_CONNECTING) el_qso_disconnect();
+        if (!strcmp(st.end_reason, "no answer") || st.state == QSO_CONNECTING) {
+            snprintf(err, sizeof(err), "%s didn't answer.\n\nIt may be busy, or not accepting connections.",
+                     s_target.call);
+        } else {
+            snprintf(err, sizeof(err), "Connection to %s ended:\n%s", s_target.call, st.end_reason);
+        }
+        connect_fail(err);
+    }
+    s_connecting = false;
+}
+
+void ui_chat_connect(const server_entry_t *entry)
+{
+    if (s_connecting) return;
+    s_connecting = true;
+    s_target = *entry;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Connecting to\n%s...", entry->call);
+    ui_modal_busy(msg);
+    ui_run_async("qso_connect", connect_worker, NULL);
+}
+
+// ---- chat screen -----------------------------------------------------------
+
+static void chat_close(void)
+{
+    if (s_poll) {
+        lv_timer_delete(s_poll);
+        s_poll = NULL;
+    }
+    ui_home_show();
+    if (s_scr) lv_obj_delete_async(s_scr);
+    s_scr = NULL;
+}
+
+static void leave_clicked(lv_event_t *e)
+{
+    s_leaving = true;
+    el_qso_disconnect();
+    chat_close();
+}
+
+static void talk_event(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        qso_status_t st;
+        el_qso_get_status(&st);
+        // Half duplex: don't key up over someone else.
+        if (!st.receiving) el_qso_set_ptt(true);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        el_qso_set_ptt(false);
+    }
+}
+
+static void set_talk(lv_color_t color, const char *text)
+{
+    lv_obj_set_style_bg_color(s_talk, color, 0);
+    lv_obj_set_style_bg_color(s_talk, color, LV_STATE_PRESSED);
+    lv_label_set_text(s_talk_label, text);
+}
+
+static void volume_event(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        int volume = lv_slider_get_value(lv_event_get_target(e));
+        g_settings.volume = volume;
+        audio_set_volume(volume);
+        lv_label_set_text_fmt(s_volume_value, "%d%%", volume);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        settings_save();
+    }
+}
+
+static void poll_cb(lv_timer_t *t)
+{
+    qso_status_t st;
+    el_qso_get_status(&st);
+
+    if (st.state != QSO_CONNECTED) {
+        lv_timer_delete(s_poll);
+        s_poll = NULL;
+        if (s_leaving) return;
+        char msg[96];
+        snprintf(msg, sizeof(msg), "Disconnected from %s\n(%s)", s_target.call,
+                 st.end_reason[0] ? st.end_reason : "link lost");
+        ui_modal_message(msg, UI_COLOR_WARN, true, chat_close);
+        return;
+    }
+
+    if (st.ptt) {
+        set_talk(UI_COLOR_GO_LIT, LV_SYMBOL_AUDIO "  TRANSMITTING\nrelease to listen");
+    } else if (st.receiving) {
+        set_talk(UI_COLOR_STOP, LV_SYMBOL_VOLUME_MAX "  BUSY\nsomeone else is talking");
+    } else {
+        set_talk(UI_COLOR_GO, LV_SYMBOL_AUDIO "  HOLD TO TALK");
+    }
+
+    if (st.remote_name[0]) lv_label_set_text(s_name, st.remote_name);
+
+    char info[sizeof(s_info_cache)];
+    el_qso_get_info(info, sizeof(info));
+    if (strcmp(info, s_info_cache)) {
+        strlcpy(s_info_cache, info, sizeof(s_info_cache));
+        lv_label_set_text(s_info, info[0] ? info : "Waiting for station info...");
+    }
+}
+
+static void chat_show(void)
+{
+    if (s_scr) lv_obj_delete(s_scr);
+    s_leaving = false;
+    s_info_cache[0] = 0;
+
+    lv_obj_t *col = ui_screen_create(&s_scr, NULL);
+#if !UI_COMPACT
+    lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+#endif
+
+    ui_title(col, s_target.call);
+    s_name = ui_label(col, s_target.desc[0] ? s_target.desc : "", UI_FONT, lv_color_white());
+    if (s_target.node) {
+        char meta[48];
+        snprintf(meta, sizeof(meta), "Node %lu", (unsigned long)s_target.node);
+        ui_label(col, meta, UI_FONT_SMALL, UI_COLOR_ACCENT);
+    }
+
+    // Station info the remote sends on connect (users, location, ...).
+    lv_obj_t *box = lv_obj_create(col);
+    lv_obj_set_width(box, LV_PCT(100));
+#if UI_COMPACT
+    lv_obj_set_height(box, 48);
+#else
+    lv_obj_set_flex_grow(box, 1);
+#endif
+    lv_obj_set_style_bg_color(box, UI_COLOR_PANEL, 0);
+    lv_obj_set_style_border_width(box, 0, 0);
+    lv_obj_set_style_radius(box, UI_RADIUS, 0);
+    lv_obj_set_style_pad_all(box, UI_PAD, 0);
+    s_info = ui_label(box, "Waiting for station info...", UI_FONT_SMALL, UI_COLOR_MUTED);
+
+    lv_obj_t *volume_row = lv_obj_create(col);
+    lv_obj_set_size(volume_row, LV_PCT(100), UI_FIELD_H);
+    lv_obj_set_flex_flow(volume_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(volume_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_bg_opa(volume_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(volume_row, 0, 0);
+    lv_obj_set_style_pad_all(volume_row, 0, 0);
+    lv_obj_set_style_pad_column(volume_row, UI_GAP, 0);
+    lv_obj_remove_flag(volume_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *volume_icon = lv_label_create(volume_row);
+    lv_label_set_text(volume_icon, LV_SYMBOL_VOLUME_MAX);
+    lv_obj_set_style_text_font(volume_icon, UI_FONT, 0);
+    lv_obj_set_style_text_color(volume_icon, UI_COLOR_MUTED, 0);
+    lv_obj_t *volume = lv_slider_create(volume_row);
+    lv_slider_set_range(volume, 0, 100);
+    lv_slider_set_value(volume, g_settings.volume, LV_ANIM_OFF);
+    lv_obj_set_height(volume, UI_SLIDER_H);
+    lv_obj_set_flex_grow(volume, 1);
+    lv_obj_add_event_cb(volume, volume_event, LV_EVENT_ALL, NULL);
+    s_volume_value = lv_label_create(volume_row);
+    lv_label_set_text_fmt(s_volume_value, "%u%%", g_settings.volume);
+    lv_obj_set_width(s_volume_value, UI_VOLUME_VALUE_W);
+    lv_obj_set_style_text_font(s_volume_value, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_volume_value, UI_COLOR_MUTED, 0);
+    lv_obj_set_style_text_align(s_volume_value, LV_TEXT_ALIGN_RIGHT, 0);
+
+    s_talk = lv_button_create(col);
+    lv_obj_set_size(s_talk, LV_PCT(100), UI_CHAT_TALK_H);
+    lv_obj_set_style_radius(s_talk, UI_RADIUS * 3, 0);
+    lv_obj_add_event_cb(s_talk, talk_event, LV_EVENT_ALL, NULL);
+    s_talk_label = lv_label_create(s_talk);
+    lv_obj_set_style_text_font(s_talk_label, UI_FONT_TITLE, 0);
+    lv_obj_set_style_text_align(s_talk_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_talk_label);
+    set_talk(UI_COLOR_GO, LV_SYMBOL_AUDIO "  HOLD TO TALK");
+
+    ui_button(col, LV_SYMBOL_CLOSE "  Leave", UI_COLOR_PANEL, leave_clicked, NULL);
+
+    s_poll = lv_timer_create(poll_cb, POLL_MS, NULL);
+    lv_screen_load(s_scr);
+}

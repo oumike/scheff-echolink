@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EchoLink Setup</title>
+<style>
+:root{--bg:#0b0d10;--panel:#171a20;--line:#2a2f38;--text:#e8ebef;--muted:#9aa3ad;--accent:#2f7df6;--go:#1f9d55;--stop:#d23c3c;--warn:#e0a526}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:.5rem 0 .25rem}
+h2{font-size:1.1rem;margin:0 0 .75rem;display:flex;gap:.5rem;align-items:center}
+.sub{color:var(--muted);margin:0 0 1rem}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin:0 0 16px}
+label{display:block;color:var(--muted);font-size:.9rem;margin:.75rem 0 .25rem}
+input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font-size:1rem}
+button{width:100%;padding:14px;margin-top:14px;border:0;border-radius:10px;font-size:1rem;font-weight:600;color:#fff;background:var(--accent);cursor:pointer}
+button.go{background:var(--go)}
+button:disabled{opacity:.5;cursor:default}
+.hint{color:var(--muted);font-size:.85rem;margin:.35rem 0 0}
+.msg{margin-top:12px;padding:10px 12px;border-radius:10px;font-size:.95rem;display:none}
+.msg.show{display:block}
+.ok{background:#12351f;color:#7ee2a8}.err{background:#3a1515;color:#ff9b9b}.busy{background:#1b2740;color:#9cc2ff}
+.step{font-size:.75rem;font-weight:700;color:#fff;background:var(--accent);border-radius:99px;padding:2px 9px}
+.done .step{background:var(--go)}
+.row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}.row span:first-child{color:var(--muted)}
+button.plain{background:#2a2f38}button.stop{background:var(--stop)}
+.btns{display:flex;flex-direction:column;gap:0}
+.srv{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.srv:last-child{border:0}.srv b{display:block}.srv small{color:var(--muted);display:block}
+.srv button{width:auto;margin:0;padding:8px 14px;font-size:.9rem}
+.srv .acts{display:flex;gap:8px;flex:none}
+.srv button.star{background:none;border:1px solid var(--line);color:var(--muted);font-size:1.1rem;padding:6px 10px}
+.srv button.star.on{color:var(--warn);border-color:var(--warn)}
+.srv.fav b{color:var(--warn)}
+#slist{margin-top:8px}
+#pager button{flex:1;padding:10px}
+#sform{display:none;border-top:1px solid var(--line);margin-top:12px;padding-top:4px}
+</style>
+</head>
+<body>
+<main>
+<h1>EchoLink</h1>
+<p class="sub">Set up Wi-Fi and your EchoLink account. The device screen follows along.</p>
+
+<section id="s-status">
+  <h2>Status</h2>
+  <div id="status">Loading…</div>
+</section>
+
+<section id="s-wifi">
+  <h2><span class="step">1</span> Wi-Fi</h2>
+  <button id="scan" type="button">Scan for networks</button>
+  <label for="nets">Nearby networks</label>
+  <select id="nets"><option value="">Tap “Scan”, or type the name below</option></select>
+  <label for="ssid">Network name (SSID)</label>
+  <input id="ssid" maxlength="32" autocapitalize="off" autocomplete="off">
+  <label for="wpass">Password</label>
+  <input id="wpass" maxlength="64" autocapitalize="off" autocomplete="off">
+  <p class="hint">Open networks don't need a password - leave it blank.</p>
+  <button id="join" class="go" type="button">Join</button>
+  <div id="wmsg" class="msg"></div>
+</section>
+
+<section id="s-acct">
+  <h2><span class="step">2</span> EchoLink account</h2>
+  <p class="hint">Your callsign must already be validated at echolink.org.</p>
+  <label for="call">Callsign</label>
+  <input id="call" maxlength="15" autocapitalize="characters" autocomplete="off">
+  <label for="apass">EchoLink password</label>
+  <input id="apass" type="password" maxlength="39" autocapitalize="off" autocomplete="off" placeholder="">
+  <label for="name">Your name (optional)</label>
+  <input id="name" maxlength="31">
+  <label for="loc">Location (optional)</label>
+  <input id="loc" maxlength="47">
+  <button id="save" class="go" type="button">Save account</button>
+  <div id="amsg" class="msg"></div>
+</section>
+<section id="s-srv">
+  <h2>Servers</h2>
+  <p class="hint">Edits go to echolink-servers.xml. The default list is kept as a backup.</p>
+  <label for="q">Search</label>
+  <input id="q" type="search" maxlength="24" autocomplete="off" placeholder="Callsign, description or node number">
+  <label for="letter">Starting with</label>
+  <select id="letter"></select>
+  <div id="slist"></div>
+  <div id="pager" style="display:none;align-items:center;gap:10px;margin-top:8px">
+    <button id="prev" class="plain" type="button" style="margin:0">&#9664; Prev</button>
+    <span id="pinfo" class="hint" style="white-space:nowrap;margin:0"></span>
+    <button id="next" class="plain" type="button" style="margin:0">Next &#9654;</button>
+  </div>
+  <button id="add" type="button">Add server</button>
+  <div id="sform">
+    <h2 id="sftitle">Edit server</h2>
+    <label for="f-call">Callsign</label>
+    <input id="f-call" maxlength="15" autocapitalize="characters" autocomplete="off" placeholder="*ECHOTEST* or W1ABC-R">
+    <label for="f-node">Node number</label>
+    <input id="f-node" inputmode="numeric" maxlength="7" autocomplete="off">
+    <label for="f-desc">Description</label>
+    <input id="f-desc" maxlength="47">
+    <label for="f-host">Host or IP address (optional)</label>
+    <input id="f-host" maxlength="63" autocapitalize="off" autocomplete="off" placeholder="Connect directly">
+    <div class="btns">
+      <button id="f-save" class="go" type="button">Save</button>
+      <button id="f-del" class="stop" type="button">Delete</button>
+      <button id="f-cancel" class="plain" type="button">Cancel</button>
+    </div>
+  </div>
+  <div id="smsg" class="msg"></div>
+</section>
+
+<section id="s-backup">
+  <h2>Backup</h2>
+  <p class="hint">Save or restore all device settings and the server list. The backup contains your Wi-Fi and EchoLink passwords; store it securely.</p>
+  <button id="dl" type="button">Download complete backup</button>
+  <button id="up" class="plain" type="button">Import a backup from this computer…</button>
+  <input id="upfile" type="file" accept=".xml,application/xml,text/xml" hidden>
+  <button id="sdx" type="button">Export to SD card</button>
+  <button id="sdi" class="plain" type="button">Import from SD card</button>
+  <div id="bmsg" class="msg"></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let joining=false,filled=false;
+function msg(el,cls,text){el.className='msg show '+cls;el.textContent=text}
+function row(k,v){return '<div class="row"><span>'+k+'</span><span>'+v+'</span></div>'}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function api(path,body){
+  const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+async function refresh(){
+  let s;
+  try{s=await api('/api/status')}catch(e){$('status').textContent='Device not reachable - it may be switching networks. Retrying…';return}
+  const w=s.wifi,a=s.account;
+  $('status').innerHTML=
+    row('Wi-Fi',w.connected?esc(w.ssid)+' ('+esc(w.ip)+')':(w.ssid?'connecting to '+esc(w.ssid)+'…':'not set up'))+
+    row('Callsign',a.callsign?esc(a.callsign):'not set')+
+    row('Directory',s.dir.logged_in?'logged in, '+s.dir.count+' stations':'not logged in')+
+    row('Servers saved',s.servers)+
+    (s.ap.active?row('Setup hotspot',esc(s.ap.ssid)):'');
+  $('s-wifi').classList.toggle('done',!!w.ssid);
+  $('s-acct').classList.toggle('done',!!(a.callsign&&a.has_password));
+  if(!filled){
+    filled=true;
+    if(w.ssid)$('ssid').value=w.ssid;
+    $('call').value=a.callsign||'';$('name').value=a.name||'';$('loc').value=a.location||'';
+    if(a.has_password)$('apass').placeholder='(saved - leave blank to keep)';
+  }
+  const j=s.join;
+  if(j.state==='joining'){msg($('wmsg'),'busy','Connecting to '+j.ssid+'…')}
+  else if(joining&&j.state==='ok'){joining=false;msg($('wmsg'),'ok','Connected! The device is restarting. Reconnect to your Wi-Fi, then open http://'+w.ip)}
+  else if(joining&&j.state==='failed'){joining=false;msg($('wmsg'),'err',j.msg)}
+  $('join').disabled=j.state==='joining';
+}
+$('scan').onclick=async()=>{
+  const b=$('scan');b.disabled=true;b.textContent='Scanning…';
+  try{
+    const nets=await api('/api/scan'),sel=$('nets');
+    sel.innerHTML='<option value="">'+nets.length+' networks found - choose one</option>'+
+      nets.map(n=>'<option value="'+esc(n.ssid)+'">'+esc(n.ssid)+' ('+n.rssi+' dBm, '+(n.secure?'secured':'open')+')</option>').join('');
+  }catch(e){alert('Scan failed: '+e.message)}
+  b.disabled=false;b.textContent='Scan again';
+};
+$('nets').onchange=e=>{if(e.target.value){$('ssid').value=e.target.value;$('wpass').value='';$('wpass').focus()}};
+$('join').onclick=async()=>{
+  const ssid=$('ssid').value.trim();
+  if(!ssid){msg($('wmsg'),'err','Enter a network name first, or scan.');return}
+  try{await api('/api/wifi',{ssid,pass:$('wpass').value});joining=true;msg($('wmsg'),'busy','Connecting to '+ssid+'…')}
+  catch(e){msg($('wmsg'),'err',e.message)}
+};
+$('save').onclick=async()=>{
+  try{
+    await api('/api/account',{callsign:$('call').value.trim(),password:$('apass').value,name:$('name').value.trim(),location:$('loc').value.trim()});
+    msg($('amsg'),'ok','Saved. The device is logging in to EchoLink.');$('apass').value='';filled=false;
+  }catch(e){msg($('amsg'),'err',e.message)}
+};
+// ---- servers ----
+const LET='*ABCDEFGHIJKLMNOPQRSTUVWXYZ#';
+const PAGE=20;
+let servers=[],editing=null,page=0;
+$('letter').innerHTML=[...LET].map(c=>'<option value="'+c+'">'+(c==='#'?'0-9':c==='*'?'* (favorites)':c)+'</option>').join('');
+function renderServers(){
+  const l=$('letter').value,pages=Math.max(1,Math.ceil(servers.length/PAGE));
+  page=Math.min(page,pages-1);
+  const first=page*PAGE;
+  const q=$('q').value.trim();
+  $('slist').innerHTML=servers.length?servers.slice(first,first+PAGE).map((s,k)=>'<div class="srv'+(s.favorite?' fav':'')+'"><div><b>'+esc(s.call)+'</b><small>'+
+      (s.favorite?'favorite - ':'')+esc(s.type)+(s.node?' - node '+s.node:'')+(s.manual?' - manual':'')+(s.desc?' - '+esc(s.desc):'')+
+      '</small></div><div class="acts"><button class="star'+(s.favorite?' on':'')+'" data-f="'+(first+k)+'" type="button" title="'+
+      (s.favorite?'Unfavorite':'Favorite')+'">'+(s.favorite?'&#9733;':'&#9734;')+'</button>'+
+      '<button class="plain" data-i="'+(first+k)+'" type="button">Edit</button></div></div>').join('')
+    :'<p class="hint">'+(q?'No stations match “'+esc(q)+'”.':l==='*'?'No favorites yet. Tap ☆ on a station to add it.':
+      'No servers starting with '+(l==='#'?'a digit':l)+'.')+'</p>';
+  $('pager').style.display=pages>1?'flex':'none';
+  $('pinfo').textContent='Page '+(page+1)+' of '+pages+' ('+servers.length+')';
+  $('prev').disabled=page===0;$('next').disabled=page>=pages-1;
+  $('slist').scrollTop=0;
+}
+async function loadServers(showCall){
+  const l=$('letter').value;
+  $('slist').innerHTML='<p class="hint">Loading…</p>';
+  const q=$('q').value.trim();
+  try{servers=await api('/api/servers?'+(q?'q='+encodeURIComponent(q):'letter='+encodeURIComponent(l)))}catch(e){$('slist').innerHTML='<p class="hint">'+esc(e.message)+'</p>';return}
+  if(showCall){const i=servers.findIndex(s=>s.call===showCall);if(i>=0)page=Math.floor(i/PAGE)}
+  renderServers();
+}
+$('prev').onclick=()=>{page--;renderServers()};
+$('next').onclick=()=>{page++;renderServers()};
+function openForm(s){
+  editing=s;$('sform').style.display='block';$('sftitle').textContent=s?'Edit server':'New server';
+  $('f-call').value=s?s.call:'';$('f-node').value=s&&s.node?s.node:'';$('f-desc').value=s?s.desc:'';$('f-host').value=s?s.host:'';
+  $('f-del').style.display=s?'block':'none';$('smsg').className='msg';$('f-call').focus();
+}
+function closeForm(){editing=null;$('sform').style.display='none'}
+$('slist').onclick=async e=>{
+  const b=e.target.closest('button[data-i]');if(b){openForm(servers[+b.dataset.i]);return}
+  const f=e.target.closest('button[data-f]');if(!f)return;
+  const s=servers[+f.dataset.f];
+  try{await api('/api/servers/favorite',{call:s.call,favorite:!s.favorite});s.favorite=!s.favorite;
+    if($('letter').value==='*'&&!$('q').value.trim())servers=servers.filter(x=>x.favorite);renderServers()}
+  catch(e){msg($('smsg'),'err',e.message)}
+};
+$('letter').onchange=()=>{closeForm();$('q').value='';page=0;loadServers()};
+let qTimer;
+$('q').oninput=()=>{clearTimeout(qTimer);qTimer=setTimeout(()=>{closeForm();page=0;loadServers()},300)};
+$('add').onclick=()=>openForm(null);
+$('f-cancel').onclick=closeForm;
+$('f-save').onclick=async()=>{
+  const call=$('f-call').value.trim().toUpperCase();
+  try{
+    await api('/api/servers',{orig_call:editing?editing.call:'',call,node:$('f-node').value.trim(),desc:$('f-desc').value.trim(),host:$('f-host').value.trim()});
+    closeForm();msg($('smsg'),'ok','Saved '+call+'.');
+    const b=call.replace(/^\*+/,'').charAt(0);$('q').value='';$('letter').value=/[A-Z]/.test(b)?b:'#';loadServers(call);
+  }catch(e){msg($('smsg'),'err',e.message)}
+};
+$('f-del').onclick=async()=>{
+  if(!editing||!confirm('Delete '+editing.call+' from your list?'))return;
+  try{await api('/api/servers/delete',{call:editing.call});msg($('smsg'),'ok','Deleted '+editing.call+'.');closeForm();loadServers()}
+  catch(e){msg($('smsg'),'err',e.message)}
+};
+// ---- backup ----
+$('dl').onclick=()=>{location.href='/api/servers/export'};
+$('up').onclick=()=>$('upfile').click();
+$('upfile').onchange=async e=>{
+  const f=e.target.files[0];e.target.value='';
+  if(!f||!confirm('Restore settings and replace the server list from '+f.name+'?'))return;
+  msg($('bmsg'),'busy','Importing '+f.name+'…');
+  try{const r=await fetch('/api/servers/import',{method:'POST',headers:{'Content-Type':'application/xml'},body:await f.text()});
+    const j=await r.json();if(!r.ok)throw new Error(j.error||'Import failed');
+    const done=j.settings?'Restored all settings and '+j.count+' servers.':'Imported '+j.count+' servers from a legacy file; settings were unchanged.';
+    msg($('bmsg'),'ok',done+(j.reconnecting?' The device is reconnecting to the restored Wi-Fi network.':''));filled=false;refresh();loadServers()}
+  catch(e){msg($('bmsg'),'err',e.message)}
+};
+$('sdx').onclick=async()=>{
+  msg($('bmsg'),'busy','Writing to the SD card…');
+  try{const j=await api('/api/sd/export',{});msg($('bmsg'),'ok','Exported all settings and '+j.count+' servers to '+j.path+' on the SD card.')}
+  catch(e){msg($('bmsg'),'err',e.message)}
+};
+$('sdi').onclick=async()=>{
+  if(!confirm('Restore settings and replace the server list from the SD card backup?'))return;
+  msg($('bmsg'),'busy','Reading the SD card…');
+  try{const j=await api('/api/sd/import',{});
+    const done=j.settings?'Restored all settings and '+j.count+' servers from the SD card.':'Imported '+j.count+' servers from a legacy SD file; settings were unchanged.';
+    msg($('bmsg'),'ok',done+(j.reconnecting?' The device is reconnecting to the restored Wi-Fi network.':''));filled=false;refresh();loadServers()}
+  catch(e){msg($('bmsg'),'err',e.message)}
+};
+// Open on favorites when there are some, otherwise on A.
+api('/api/status').then(st=>{$('letter').value=st.favorites?'*':'A'}).catch(()=>{$('letter').value='A'}).finally(()=>loadServers());
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>

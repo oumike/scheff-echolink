@@ -1,4 +1,4 @@
 #pragma once
 
-// BOOT button as hold-to-talk PTT.
+// Starts the board's physical hold-to-talk input (BOOT or keyboard Space).
 void ptt_button_start(void);

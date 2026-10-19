@@ -48,6 +48,8 @@ static struct {
     uint32_t remote_ip;
     char remote_call[16];
     char remote_name[32];
+    char end_reason[32];
+    char info[512];
     int retries;
     int64_t last_rx_us, next_keepalive_us, last_audio_us;
     uint32_t rx_packets, tx_packets;
@@ -191,7 +193,13 @@ static void send_bye(uint32_t ip)
 static void send_info(uint32_t ip)
 {
     char buf[160];
-    int n = snprintf(buf, sizeof(buf), "oNDATA\r%s %s\rEchoLink on LilyGO T-Display-P4\r", g_settings.callsign,
+    int n = snprintf(buf, sizeof(buf), "oNDATA\r%s %s\rEchoLink on LilyGO "
+#if CONFIG_IDF_TARGET_ESP32S3
+                     "T-Deck Plus"
+#else
+                     "T-Display-P4"
+#endif
+                     "\r", g_settings.callsign,
                      g_settings.name);
     if (n > 0 && n < sizeof(buf)) send_to(q.audio_fd, ip, PORT_AUDIO, buf, n + 1);
 }
@@ -202,6 +210,7 @@ static void set_idle(const char *why)
 {
     if (q.state == QSO_IDLE) return;
     printf("\n*** Disconnected from %s (%s)\n", q.remote_call[0] ? q.remote_call : "?", why);
+    strlcpy(q.end_reason, why, sizeof(q.end_reason));
     q.state = QSO_IDLE;
     q.ptt = false;
     q.remote_ip = 0;
@@ -281,6 +290,9 @@ static void handle_text(const uint8_t *buf, size_t len)
     text[n] = 0;  // packets are NUL-terminated, but don't trust that
     for (char *c = text; *c; c++) if (*c == '\r') *c = '\n';
     if (len > 6 && buf[6] == '\r') {
+        xSemaphoreTake(q.lock, portMAX_DELAY);
+        strlcpy(q.info, text + 7, sizeof(q.info));
+        xSemaphoreGive(q.lock);
         printf("\n--- info from %s ---\n%s\n---\n", q.remote_call, text + 7);
     } else {
         printf("\n[chat] %s\n", text + 6);
@@ -420,6 +432,8 @@ esp_err_t el_qso_connect(const char *target)
     q.remote_ip = st.ip;
     strlcpy(q.remote_call, st.call, sizeof(q.remote_call));
     q.remote_name[0] = 0;
+    q.end_reason[0] = 0;
+    q.info[0] = 0;
     q.state = QSO_CONNECTING;
     q.retries = 0;
     q.next_keepalive_us = esp_timer_get_time() + KEEPALIVE_US;
@@ -476,6 +490,7 @@ void el_qso_get_status(qso_status_t *out)
     out->receiving = q.state == QSO_CONNECTED && esp_timer_get_time() - q.last_audio_us < RX_HOLD_US;
     out->rx_packets = q.rx_packets;
     out->tx_packets = q.tx_packets;
+    strlcpy(out->end_reason, q.end_reason, sizeof(out->end_reason));
     xSemaphoreGive(q.lock);
 }
 
@@ -504,4 +519,11 @@ void el_qso_mic_frame(const int16_t *pcm, size_t samples)
     }
     send_to(q.audio_fd, q.remote_ip, PORT_AUDIO, pkt, sizeof(pkt));
     q.tx_packets++;
+}
+
+void el_qso_get_info(char *out, size_t size)
+{
+    xSemaphoreTake(q.lock, portMAX_DELAY);
+    strlcpy(out, q.info, size);
+    xSemaphoreGive(q.lock);
 }

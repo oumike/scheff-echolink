@@ -25,6 +25,7 @@ typedef struct {
     bool ptt;
     bool receiving;
     uint32_t rx_packets, tx_packets;
+    char end_reason[32];  // why the last connection ended ("no answer", ...)
 } qso_status_t;
 
 esp_err_t el_qso_init(void);
@@ -41,6 +42,9 @@ esp_err_t el_qso_send_chat(const char *msg);
 void el_qso_update_identity(void);
 
 void el_qso_get_status(qso_status_t *out);
+
+// The station info text the remote sent on connect (empty until it arrives).
+void el_qso_get_info(char *out, size_t size);
 
 // Mic frames from the audio layer (160 samples @ 8 kHz).
 void el_qso_mic_frame(const int16_t *pcm, size_t samples);

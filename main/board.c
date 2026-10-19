@@ -14,16 +14,22 @@ static const char *TAG = "board";
 #define XL9535_REG_OUT0 0x02
 #define XL9535_REG_CFG0 0x06  // 1 = input
 
+#define BQ27220_ADDR                    0x55
+#define BQ27220_REG_STATE_OF_CHARGE     0x2c
+
 // Expander pin numbers: IO0..IO7 = 0..7, IO10..IO17 = 8..15.
 #define XIO_POWER_EN_3V3  0
 #define XIO_SKY13453_VCTL 1
+#define XIO_SCREEN_RST    2
+#define XIO_TOUCH_RST     3
 #define XIO_ETH_RST       5
 #define XIO_AUDIO_PWR_EN  6
 #define XIO_USB_PHY_PWR   8   // IO10
 #define XIO_C6_EN         12  // IO14
+#define XIO_SD_PWR_N      13  // IO15, active low
 
 static i2c_master_bus_handle_t s_i2c1, s_i2c2;
-static i2c_master_dev_handle_t s_xl9535;
+static i2c_master_dev_handle_t s_xl9535, s_bq27220;
 static SemaphoreHandle_t s_xl_lock;
 static uint16_t s_out, s_cfg;  // shadow registers
 
@@ -85,6 +91,8 @@ esp_err_t board_init(void)
         .scl_speed_hz = 400000,
     };
     ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c1, &dev, &s_xl9535), TAG, "xl9535 add");
+    dev.device_address = BQ27220_ADDR;
+    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_i2c1, &dev, &s_bq27220), TAG, "bq27220 add");
     ESP_RETURN_ON_ERROR(xl_read16(XL9535_REG_OUT0, &s_out), TAG, "xl9535 not responding");
     ESP_RETURN_ON_ERROR(xl_read16(XL9535_REG_CFG0, &s_cfg), TAG, "xl9535 cfg");
 
@@ -93,10 +101,13 @@ esp_err_t board_init(void)
     // into download mode.
     ESP_RETURN_ON_ERROR(xl_set(XIO_POWER_EN_3V3, 0), TAG, "3v3");
     ESP_RETURN_ON_ERROR(xl_set(XIO_SKY13453_VCTL, 1), TAG, "rf sw");
+    ESP_RETURN_ON_ERROR(xl_set(XIO_SCREEN_RST, 0), TAG, "screen rst");
+    ESP_RETURN_ON_ERROR(xl_set(XIO_TOUCH_RST, 0), TAG, "touch rst");
     ESP_RETURN_ON_ERROR(xl_set(XIO_ETH_RST, 0), TAG, "eth rst");
     ESP_RETURN_ON_ERROR(xl_set(XIO_C6_EN, 0), TAG, "c6 en");
     ESP_RETURN_ON_ERROR(xl_set(XIO_USB_PHY_PWR, 1), TAG, "usb phy");
     ESP_RETURN_ON_ERROR(xl_set(XIO_AUDIO_PWR_EN, 0), TAG, "audio pwr");
+    ESP_RETURN_ON_ERROR(xl_set(XIO_SD_PWR_N, 1), TAG, "sd pwr");
 
     ESP_LOGI(TAG, "XL9535 ready (out=0x%04x cfg=0x%04x)", s_out, s_cfg);
     return ESP_OK;
@@ -112,6 +123,43 @@ esp_err_t board_audio_power(bool on)
 esp_err_t board_c6_enable(bool on)
 {
     return xl_set(XIO_C6_EN, on);
+}
+
+esp_err_t board_sd_power(bool on)
+{
+    esp_err_t err = xl_set(XIO_SD_PWR_N, !on);
+    if (err == ESP_OK && on) vTaskDelay(pdMS_TO_TICKS(10));
+    return err;
+}
+
+esp_err_t board_screen_reset_release(bool released)
+{
+    return xl_set(XIO_SCREEN_RST, released);
+}
+
+esp_err_t board_touch_reset_release(bool released)
+{
+    return xl_set(XIO_TOUCH_RST, released);
+}
+
+esp_err_t board_battery_percent(uint8_t *percent)
+{
+    if (!percent) return ESP_ERR_INVALID_ARG;
+    if (!s_bq27220) return ESP_ERR_INVALID_STATE;
+
+    uint8_t reg = BQ27220_REG_STATE_OF_CHARGE;
+    uint8_t data[2];
+    ESP_RETURN_ON_ERROR(i2c_master_transmit_receive(s_bq27220, &reg, 1, data, sizeof(data), 100),
+                        TAG, "bq27220 state of charge");
+    uint16_t value = data[0] | (data[1] << 8);
+    if (value > 100) return ESP_ERR_INVALID_RESPONSE;
+    *percent = value;
+    return ESP_OK;
+}
+
+i2c_master_bus_handle_t board_main_i2c_bus(void)
+{
+    return s_i2c1;
 }
 
 i2c_master_bus_handle_t board_codec_i2c_bus(void)
