@@ -5,9 +5,16 @@ set(COMMON_SRCS
      "onboard.c" "web_config.c")
 
 if(IDF_TARGET STREQUAL "esp32s3")
-     set(PLATFORM_SRCS "board_tdeck.c" "display_tdeck.c" "audio_tdeck.c"
-                           "ptt_tdeck.c" "sdcard_tdeck.c")
-     set(PLATFORM_REQUIRES esp_adc esp_driver_spi esp_driver_sdspi esp_rom)
+     # Requirements are resolved before sdkconfig is applied, so they cover
+     # every ESP32-S3 board; only the sources depend on the selected board.
+     if(CONFIG_EL_BOARD_WIO_TRACKER_L2)
+          set(PLATFORM_SRCS "board_wio_l2.c" "display_wio_l2.c" "audio_wio_l2.c"
+                                "ptt.c" "sdcard_wio_l2.c")
+     else()
+          set(PLATFORM_SRCS "board_tdeck.c" "display_tdeck.c" "audio_tdeck.c"
+                                "ptt_tdeck.c" "sdcard_tdeck.c")
+     endif()
+     set(PLATFORM_REQUIRES esp_adc esp_driver_spi esp_driver_sdspi esp_driver_sdmmc esp_rom)
 elseif(IDF_TARGET STREQUAL "esp32p4")
      set(PLATFORM_SRCS "board.c" "display.c" "audio.c" "ptt.c" "sdcard.c")
      set(PLATFORM_REQUIRES esp_driver_sdmmc)

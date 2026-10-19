@@ -7,6 +7,7 @@
 #include "esp_console.h"
 #include "lwip/inet.h"
 #include "audio.h"
+#include "board.h"
 #include "el_directory.h"
 #include "el_qso.h"
 #include "net_wifi.h"
@@ -189,13 +190,7 @@ void console_start(void)
     reg("c", "Alias for connect", "<call | node | ip>", cmd_connect);
     reg("disconnect", "Hang up", NULL, cmd_disconnect);
     reg("dc", "Alias for disconnect", NULL, cmd_disconnect);
-        reg("ptt",
-    #if CONFIG_IDF_TARGET_ESP32S3
-        "Toggle transmit (or hold the Space bar)",
-    #else
-        "Toggle transmit (or hold the BOOT button)",
-    #endif
-        "[on|off]", cmd_ptt);
+    reg("ptt", "Toggle transmit (or hold " BOARD_PTT_HINT ")", "[on|off]", cmd_ptt);
     reg("chat", "Send a chat message", "<text>", cmd_chat);
     reg("loopback", "Mic to speaker loopback test", "[on|off]", cmd_loopback);
 

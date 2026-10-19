@@ -1,4 +1,5 @@
-// EchoLink client shared by the LilyGO T-Display-P4 and T-Deck Plus targets.
+// EchoLink client shared by the LilyGO T-Display-P4, LilyGO T-Deck Plus and
+// Seeed Wio Tracker L2 targets.
 // Board-specific display, audio, network transport and PTT implementations
 // sit behind the common module APIs used here.
 

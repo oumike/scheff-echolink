@@ -12,6 +12,7 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "audio.h"
+#include "board.h"
 #include "el_directory.h"
 #include "settings.h"
 
@@ -193,13 +194,7 @@ static void send_bye(uint32_t ip)
 static void send_info(uint32_t ip)
 {
     char buf[160];
-    int n = snprintf(buf, sizeof(buf), "oNDATA\r%s %s\rEchoLink on LilyGO "
-#if CONFIG_IDF_TARGET_ESP32S3
-                     "T-Deck Plus"
-#else
-                     "T-Display-P4"
-#endif
-                     "\r", g_settings.callsign,
+    int n = snprintf(buf, sizeof(buf), "oNDATA\r%s %s\rEchoLink on " BOARD_NAME "\r", g_settings.callsign,
                      g_settings.name);
     if (n > 0 && n < sizeof(buf)) send_to(q.audio_fd, ip, PORT_AUDIO, buf, n + 1);
 }

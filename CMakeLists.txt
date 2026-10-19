@@ -4,4 +4,4 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 set(PROJECT_VER "0.1.0")
 
-project(echolink-p4)
+project(scheff-echolink)

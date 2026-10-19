@@ -13,8 +13,8 @@
 #if CONFIG_IDF_TARGET_ESP32P4
 #include "esp_hosted.h"
 #include "esp_hosted_transport_config.h"
-#include "board.h"
 #endif
+#include "board.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
@@ -104,13 +104,7 @@ esp_err_t net_wifi_init(void)
     esp_err_t err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
     s_netif = esp_netif_create_default_wifi_sta();
-    esp_netif_set_hostname(s_netif,
-#if CONFIG_IDF_TARGET_ESP32S3
-                           "echolink-tdeck"
-#else
-                           "echolink-p4"
-#endif
-    );
+    esp_netif_set_hostname(s_netif, BOARD_HOSTNAME);
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&cfg), TAG, "wifi init");
@@ -268,13 +262,7 @@ esp_err_t net_wifi_ap_start(void)
 
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    snprintf(s_ap_ssid, sizeof(s_ap_ssid),
-#if CONFIG_IDF_TARGET_ESP32S3
-             "EchoLink-TDeck-%02X%02X",
-#else
-             "EchoLink-P4-%02X%02X",
-#endif
-             mac[4], mac[5]);
+    snprintf(s_ap_ssid, sizeof(s_ap_ssid), BOARD_AP_SSID_PREFIX "-%02X%02X", mac[4], mac[5]);
     wifi_config_t ap = {
         .ap = {
             .channel = 1,

@@ -1095,6 +1095,8 @@ CONFIG_PARTITION_TABLE_MD5=y
 #
 # EchoLink Client
 #
+CONFIG_EL_BOARD_TDECK_PLUS=y
+# CONFIG_EL_BOARD_WIO_TRACKER_L2 is not set
 # default:
 CONFIG_EL_CALLSIGN=""
 # default:

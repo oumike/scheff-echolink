@@ -31,8 +31,11 @@ static const char *TAG = "web";
 #define SCAN_MAX          30
 #define IMPORT_MAX        ((2 * 1024 * 1024) + 4096)
 #define BUCKET_MAX        3000
-#define BACKUP_FILE_NAME  "echolink-p4-backup.xml"
+#define BACKUP_FILE_NAME  "scheff-echolink-backup.xml"
 #define SD_BACKUP_PATH    SDCARD_MOUNT "/" BACKUP_FILE_NAME
+// Before the rename to scheff-echolink the SD card backup was
+// echolink-p4-backup.xml; a card may still hold one, and import reads it.
+#define SD_LEGACY_BACKUP_PATH SDCARD_MOUNT "/echolink-p4-backup.xml"
 #define SD_LEGACY_PATH    SDCARD_MOUNT "/echolink-servers.xml"
 
 extern const char index_html_start[] asm("_binary_index_html_start");
@@ -735,7 +738,8 @@ static esp_err_t sd_error(httpd_req_t *req)
 }
 
 // POST /api/sd/export and /api/sd/import: complete backup at the root of the
-// microSD card. Import also accepts the old server-list-only filename.
+// microSD card. Import also accepts the pre-rename backup and the old
+// server-list-only filename.
 static esp_err_t h_sd_export(httpd_req_t *req)
 {
     if (sdcard_mount() != ESP_OK) return sd_error(req);
@@ -787,6 +791,7 @@ static esp_err_t h_sd_import(httpd_req_t *req)
     if (sdcard_mount() != ESP_OK) return sd_error(req);
     char *xml = NULL;
     esp_err_t err = backup_read_file(SD_BACKUP_PATH, &xml);
+    if (err == ESP_ERR_NOT_FOUND) err = backup_read_file(SD_LEGACY_BACKUP_PATH, &xml);
     if (err == ESP_ERR_NOT_FOUND) err = backup_read_file(SD_LEGACY_PATH, &xml);
     if (err == ESP_ERR_NOT_FOUND) {
         return send_error(req, "404 Not Found", "No " BACKUP_FILE_NAME " on the SD card.");

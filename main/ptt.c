@@ -6,7 +6,7 @@
 #include "board.h"
 #include "el_qso.h"
 
-// Hold-to-talk on the BOOT button, debounced by requiring a stable level for
+// Hold-to-talk on the BOOT/user button, debounced by requiring a stable level for
 // three consecutive 10 ms samples.
 static void ptt_task(void *arg)
 {

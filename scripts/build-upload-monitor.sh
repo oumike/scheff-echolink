@@ -12,16 +12,17 @@ DEFAULT_PIO_CORE_DIR="${PLATFORMIO_CORE_DIR:-$HOME/.platformio}"
 PIO_CORE_DIR="${ECHOLINK_PIO_CORE_DIR:-${ECHOLINK_P4_PIO_CORE_DIR:-${DEFAULT_PIO_CORE_DIR}-p4}}"
 # ESP-IDF refuses a build directory whose path contains a space, and this
 # project sits under "/Volumes/T7 Shield/...", so build outside it.
-BUILD_DIR="${ECHOLINK_BUILD_DIR:-$PIO_CORE_DIR/build/echolink-p4}"
+BUILD_DIR="${ECHOLINK_BUILD_DIR:-$PIO_CORE_DIR/build/scheff-echolink}"
 PORT=""
 ERASE_FIRST=false
 FULLCLEAN=false
 JUST_BUILD=false
 
 show_usage() {
-	echo "Usage: $0 [--tdisplay-p4|--tdeck-plus] [--port PORT] [--erase|-E] [--fullclean|-F] [--just-build|-B]"
+	echo "Usage: $0 [--tdisplay-p4|--tdeck-plus|--wio-tracker-l2] [--port PORT] [--erase|-E] [--fullclean|-F] [--just-build|-B]"
 	echo "  --tdisplay-p4  Build the LilyGO T-Display-P4 target (default)."
 	echo "  --tdeck-plus   Build the LilyGO T-Deck Plus target."
+	echo "  --wio-tracker-l2  Build the Seeed Wio Tracker L2 target."
 	echo "  --port PORT   Serial port of the selected device (e.g. /dev/cu.usbmodem1101)."
 	echo "                If omitted, PlatformIO auto-detects the port."
 	echo "  --erase, -E   Erase flash before build/upload. This wipes NVS, so the"
@@ -73,6 +74,9 @@ while [ $# -gt 0 ]; do
 			;;
 		--tdeck-plus)
 			ENV_NAME="tdeck-plus"
+			;;
+		--wio-tracker-l2)
+			ENV_NAME="wio-tracker-l2"
 			;;
 		--port)
 			if [ $# -lt 2 ]; then

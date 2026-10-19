@@ -1,6 +1,7 @@
 #pragma once
 
-// Board support shared by the LilyGO T-Display-P4 and T-Deck Plus targets.
+// Board support for the LilyGO T-Display-P4, LilyGO T-Deck Plus and Seeed
+// Wio Tracker L2 targets. CONFIG_EL_BOARD_* selects the board.
 
 #include <stdbool.h>
 #include "sdkconfig.h"
@@ -10,7 +11,12 @@
 #include "driver/spi_master.h"
 #endif
 
-#if CONFIG_IDF_TARGET_ESP32P4
+#if CONFIG_EL_BOARD_TDISPLAY_P4
+#define BOARD_NAME           "LilyGO T-Display-P4"
+#define BOARD_HOSTNAME       "scheff-echolink-p4"
+#define BOARD_AP_SSID_PREFIX "Scheff-EchoLink-P4"
+#define BOARD_PTT_HINT       "the BOOT button"
+
 // I2C bus 1: XL9535 I/O expander, touch, RTC, fuel gauge.
 #define BOARD_I2C1_SDA 7
 #define BOARD_I2C1_SCL 8
@@ -29,8 +35,13 @@
 // BOOT button, active low. Shared with the Ethernet RMII TXD1, so don't use
 // it as PTT if Ethernet is ever enabled.
 #define BOARD_BOOT_BUTTON 35
-#elif CONFIG_IDF_TARGET_ESP32S3
+#elif CONFIG_EL_BOARD_TDECK_PLUS
 // LilyGO T-Deck Plus. The Plus uses the original T-Deck peripheral map.
+#define BOARD_NAME           "LilyGO T-Deck Plus"
+#define BOARD_HOSTNAME       "scheff-echolink-tdeck"
+#define BOARD_AP_SSID_PREFIX "Scheff-EchoLink-TDeck"
+#define BOARD_PTT_HINT       "the Space bar"
+
 #define BOARD_POWER_ON       10
 #define BOARD_I2C_SDA        18
 #define BOARD_I2C_SCL         8
@@ -54,6 +65,54 @@
 #define BOARD_MIC_DIN        14
 #define BOARD_BOOT_BUTTON     0
 #define BOARD_SPI_HOST SPI2_HOST
+#elif CONFIG_EL_BOARD_WIO_TRACKER_L2
+// Seeed Wio Tracker L2. Pins follow Seeed's Meshtastic variant
+// (variants/esp32s3/seeed_wio_tracker_L2).
+#define BOARD_NAME           "Seeed Wio Tracker L2"
+#define BOARD_HOSTNAME       "scheff-echolink-wio-l2"
+#define BOARD_AP_SSID_PREFIX "Scheff-EchoLink-WioL2"
+#define BOARD_PTT_HINT       "the user button"
+
+// One I2C bus: PCA9555 expander, GT911 touch, LP5814 backlight, ADS1115
+// battery ADC, ES8311 DAC and ES7243E microphone ADC. Seeed runs it at
+// 100 kHz.
+#define BOARD_I2C_SDA        47
+#define BOARD_I2C_SCL        48
+#define BOARD_I2C_HZ         100000
+#define BOARD_EXPANDER_ADDR  0x21
+#define BOARD_BACKLIGHT_ADDR 0x2c
+#define BOARD_BAT_ADC_ADDR   0x48
+#define BOARD_ES8311_ADDR    0x18
+#define BOARD_ES7243E_ADDR   0x14
+
+// NV3031B LCD over QSPI. Its reset is on the expander.
+#define BOARD_LCD_SPI_HOST   SPI3_HOST
+#define BOARD_LCD_SCLK       42
+#define BOARD_LCD_IO0        41
+#define BOARD_LCD_IO1        40
+#define BOARD_LCD_IO2        39
+#define BOARD_LCD_IO3        38
+#define BOARD_LCD_CS         46
+
+// One I2S bus: ES8311 DAC on DOUT, ES7243E ADC on DIN.
+#define BOARD_I2S_MCLK       10
+#define BOARD_I2S_BCLK       11
+#define BOARD_I2S_WS         12
+#define BOARD_I2S_DOUT       16
+#define BOARD_I2S_DIN        15
+
+// microSD, 1-bit SDMMC through the GPIO matrix.
+#define BOARD_SD_CLK          2
+#define BOARD_SD_CMD          3
+#define BOARD_SD_D0           1
+
+// SX1262 LoRa chip select, held high so the radio stays off its bus.
+#define BOARD_RADIO_CS       21
+
+// User button, active low.
+#define BOARD_BOOT_BUTTON     0
+#else
+#error "No supported board selected (EL_BOARD in menuconfig)"
 #endif
 
 esp_err_t board_init(void);
