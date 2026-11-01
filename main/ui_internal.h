@@ -68,13 +68,17 @@
 #define UI_COLOR_WARN    lv_color_hex(0xe0a526)
 
 // ---- screens ----
+// First-boot setup, or manual recovery from Home (with a Back action).
 void ui_wifi_show(void);
 void ui_home_show(void);
+// True only on Home, without an active server edit form.
+bool ui_home_is_active(void);
 // Redraws the callsign header after the account changed.
 void ui_home_refresh_account(void);
 // Account form: full screen during onboarding, an overlay when editing.
 void ui_account_onboard(void);
 void ui_account_edit(void);
+bool ui_account_is_open(void);
 // Deletes the Wi-Fi setup screens / the account form once onboarding moves on.
 void ui_wifi_destroy(void);
 void ui_account_destroy(void);
@@ -82,6 +86,8 @@ void ui_account_destroy(void);
 // and/or the device's IP); empty when neither is up.
 void ui_web_hint_update(lv_obj_t *label);
 void ui_chat_connect(const server_entry_t *entry);
+// The shared UI timer observes all QSO sources and updates Chat controls.
+void ui_chat_update(void);
 
 // ---- building blocks ----
 
@@ -104,6 +110,7 @@ void ui_modal_busy(const char *text);
 // and calls `on_close`; without, the caller closes it (ui_modal_close_after).
 void ui_modal_message(const char *text, lv_color_t color, bool ok, void (*on_close)(void));
 void ui_modal_close(void);
+bool ui_modal_is_open(void);
 // A choice: `title`, one stacked button per item, then Cancel. Tapping an item
 // closes the modal and calls `cb` with its index; Cancel just closes it.
 void ui_modal_menu(const char *title, const char *const *items, const lv_color_t *colors, int count,
@@ -113,5 +120,5 @@ void ui_modal_close_after(uint32_t ms, void (*then)(void));
 
 // Runs `fn(arg)` on a short-lived worker task, for blocking work (scan, join,
 // connect) that must not stall LVGL. `fn` takes display_lock() itself before
-// touching the UI.
-void ui_run_async(const char *name, void (*fn)(void *), void *arg);
+// touching the UI. Returns false if launch fails; the caller still owns `arg`.
+bool ui_run_async(const char *name, void (*fn)(void *), void *arg);

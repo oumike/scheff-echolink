@@ -1,6 +1,7 @@
 #include "server_list.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,13 +15,15 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "lwip/inet.h"
+#include "lwip/sockets.h"
 #include "wear_levelling.h"
+#include "file_store.h"
+#include "xml.h"
 
 static const char *TAG = "servers";
 
 #define MOUNT_POINT    "/data"
 #define PARTITION      "storage"
-#define TMP_SUFFIX     ".tmp"
 #define FILE_MAX_BYTES (2 * 1024 * 1024)
 
 static SemaphoreHandle_t s_lock;
@@ -110,112 +113,104 @@ static void notify_changed(void)
 
 // ---- XML -------------------------------------------------------------------
 
-static void xml_escape(FILE *f, const char *s)
+static char *xml_escape(char *out, const char *s)
 {
     for (; *s; s++) {
+        const char *entity;
         switch (*s) {
-        case '&': fputs("&amp;", f); break;
-        case '<': fputs("&lt;", f); break;
-        case '>': fputs("&gt;", f); break;
-        case '"': fputs("&quot;", f); break;
-        case '\'': fputs("&apos;", f); break;
+        case '&': entity = "&amp;"; break;
+        case '<': entity = "&lt;"; break;
+        case '>': entity = "&gt;"; break;
+        case '"': entity = "&quot;"; break;
+        case '\'': entity = "&apos;"; break;
         default:
             // Directory text is Latin-1-ish; keep the file valid UTF-8 by
             // dropping anything outside printable ASCII.
-            if ((unsigned char)*s >= 0x20 && (unsigned char)*s < 0x7f) fputc(*s, f);
-        }
-    }
-}
-
-// Copies attribute `name` of the element in [el, el_end) into `out`,
-// decoding the five predefined entities. Returns false if absent.
-static bool xml_attr(const char *el, const char *el_end, const char *name, char *out, size_t size)
-{
-    size_t nlen = strlen(name);
-    for (const char *p = el; p + nlen + 2 < el_end; p++) {
-        if (!isspace((unsigned char)p[-1]) || strncmp(p, name, nlen) || p[nlen] != '=') continue;
-        char q = p[nlen + 1];
-        if (q != '"' && q != '\'') continue;
-        const char *v = p + nlen + 2;
-        size_t o = 0;
-        while (v < el_end && *v != q) {
-            char c = *v++;
-            if (c == '&') {
-                static const struct { const char *ent; char ch; } ents[] = {
-                    {"amp;", '&'}, {"lt;", '<'}, {"gt;", '>'}, {"quot;", '"'}, {"apos;", '\''},
-                };
-                for (int i = 0; i < 5; i++) {
-                    size_t el_len = strlen(ents[i].ent);
-                    if (v + el_len <= el_end && !strncmp(v, ents[i].ent, el_len)) {
-                        c = ents[i].ch;
-                        v += el_len;
-                        break;
-                    }
-                }
-            }
-            if (o + 1 < size) out[o++] = c;
-        }
-        out[o] = 0;
-        return true;
-    }
-    return false;
-}
-
-// Parses every <server .../> element of `buf` (NUL-terminated) into `out`,
-// sorted. Unknown attributes are ignored; an element without a callsign is
-// skipped.
-static esp_err_t parse_xml(const char *buf, vec_t *out)
-{
-    out->n = 0;
-    for (const char *p = strstr(buf, "<server"); p; p = strstr(p, "<server")) {
-        const char *el_end = strstr(p, "/>");
-        if (!el_end) break;
-        if (!isspace((unsigned char)p[7])) {  // e.g. "<servers"
-            p += 7;
+            if ((unsigned char)*s >= 0x20 && (unsigned char)*s < 0x7f) *out++ = *s;
             continue;
         }
-        if (!vec_reserve(out, out->n + 1)) return ESP_ERR_NO_MEM;
-        server_entry_t *e = &out->v[out->n];
-        memset(e, 0, sizeof(*e));
-        char tmp[64];
-        if (xml_attr(p, el_end, "call", e->call, sizeof(e->call)) && e->call[0]) {
-            xml_attr(p, el_end, "desc", e->desc, sizeof(e->desc));
-            xml_attr(p, el_end, "host", e->host, sizeof(e->host));
-            if (xml_attr(p, el_end, "node", tmp, sizeof(tmp))) e->node = strtoul(tmp, NULL, 10);
-            if (xml_attr(p, el_end, "ip", tmp, sizeof(tmp)) && tmp[0]) e->ip = inet_addr(tmp);
-            e->type = xml_attr(p, el_end, "type", tmp, sizeof(tmp)) ? type_from_name(tmp) : type_from_call(e->call);
-            e->manual = xml_attr(p, el_end, "manual", tmp, sizeof(tmp)) && !strcmp(tmp, "true");
-            e->favorite = xml_attr(p, el_end, "favorite", tmp, sizeof(tmp)) && !strcmp(tmp, "true");
-            out->n++;
-        }
-        p = el_end + 2;
+        size_t len = strlen(entity);
+        memcpy(out, entity, len);
+        out += len;
     }
-    qsort(out->v, out->n, sizeof(*out->v), entry_cmp);
+    *out = 0;
+    return out;
+}
+
+static esp_err_t write_server_entry(server_list_write_cb_t write, void *ctx, const server_entry_t *entry)
+{
+    ESP_RETURN_ON_FALSE(entry->type >= SERVER_CONFERENCE && entry->type <= SERVER_OTHER &&
+                        strnlen(entry->call, sizeof(entry->call)) < sizeof(entry->call) &&
+                        strnlen(entry->desc, sizeof(entry->desc)) < sizeof(entry->desc) &&
+                        strnlen(entry->host, sizeof(entry->host)) < sizeof(entry->host),
+                        ESP_ERR_INVALID_ARG, TAG, "invalid server entry");
+    // Every string byte expands to at most six bytes; fixed fields fit in 192.
+    char line[6 * (sizeof(entry->call) + sizeof(entry->desc) + sizeof(entry->host)) + 192];
+    char *out = line;
+    out += snprintf(out, sizeof(line), "  <server call=\"");
+    out = xml_escape(out, entry->call);
+    out += snprintf(out, sizeof(line) - (out - line), "\" node=\"%lu\" type=\"%s\" desc=\"",
+                    (unsigned long)entry->node, TYPE_NAMES[entry->type]);
+    out = xml_escape(out, entry->desc);
+    char ip[16] = "";
+    if (entry->ip) inet_ntop(AF_INET, &entry->ip, ip, sizeof(ip));
+    out += snprintf(out, sizeof(line) - (out - line), "\" ip=\"%s\" host=\"", ip);
+    out = xml_escape(out, entry->host);
+    out += snprintf(out, sizeof(line) - (out - line), "\"%s%s/>\n",
+                    entry->manual ? " manual=\"true\"" : "", entry->favorite ? " favorite=\"true\"" : "");
+    return write(ctx, line, out - line);
+}
+
+static esp_err_t parse_server(void *ctx, const char **attributes)
+{
+    vec_t *out = ctx;
+    server_entry_t entry = {0};
+    if (xml_copy_attribute(attributes, "call", entry.call, sizeof(entry.call)) != 1 || !entry.call[0] ||
+        xml_copy_attribute(attributes, "desc", entry.desc, sizeof(entry.desc)) < 0 ||
+        xml_copy_attribute(attributes, "host", entry.host, sizeof(entry.host)) < 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const char *value = xml_attribute(attributes, "node");
+    if (value) {
+        char *end;
+        errno = 0;
+        unsigned long node = strtoul(value, &end, 10);
+        if (!isdigit((unsigned char)*value) || *end || errno || node > UINT32_MAX) return ESP_ERR_INVALID_ARG;
+        entry.node = node;
+    }
+    value = xml_attribute(attributes, "ip");
+    if (value && *value) {
+        struct in_addr address;
+        if (!inet_aton(value, &address)) return ESP_ERR_INVALID_ARG;
+        entry.ip = address.s_addr;
+    }
+    value = xml_attribute(attributes, "type");
+    entry.type = value ? type_from_name(value) : type_from_call(entry.call);
+    value = xml_attribute(attributes, "manual");
+    if (value && strcmp(value, "true") && strcmp(value, "false")) return ESP_ERR_INVALID_ARG;
+    entry.manual = value && !strcmp(value, "true");
+    value = xml_attribute(attributes, "favorite");
+    if (value && strcmp(value, "true") && strcmp(value, "false")) return ESP_ERR_INVALID_ARG;
+    entry.favorite = value && !strcmp(value, "true");
+    if (!vec_reserve(out, out->n + 1)) return ESP_ERR_NO_MEM;
+    out->v[out->n++] = entry;
+    return ESP_OK;
+}
+
+static esp_err_t parse_xml(const char *buf, vec_t *out, bool *backup)
+{
+    out->n = 0;
+    xml_document_t document;
+    esp_err_t err = xml_read(buf, parse_server, out, &document);
+    if (err != ESP_OK) return err;
+    if (backup) *backup = document.backup;
+    if (out->n > 1) qsort(out->v, out->n, sizeof(*out->v), entry_cmp);
     return ESP_OK;
 }
 
 static esp_err_t read_file(const char *path, char **out, size_t *len)
 {
-    FILE *f = fopen(path, "r");
-    if (!f) return ESP_ERR_NOT_FOUND;
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size <= 0 || size > FILE_MAX_BYTES) {
-        fclose(f);
-        return ESP_ERR_INVALID_SIZE;
-    }
-    char *buf = heap_caps_malloc(size + 1, MALLOC_CAP_SPIRAM);
-    if (!buf) {
-        fclose(f);
-        return ESP_ERR_NO_MEM;
-    }
-    size_t got = fread(buf, 1, size, f);
-    fclose(f);
-    buf[got] = 0;
-    *out = buf;
-    *len = got;
-    return ESP_OK;
+    return file_store_read_text(path, FILE_MAX_BYTES, out, len);
 }
 
 // Replaces the in-memory list with the contents of `path`. Call with s_lock.
@@ -225,25 +220,34 @@ static esp_err_t load_file(const char *path)
     size_t len;
     esp_err_t err = read_file(path, &buf, &len);
     if (err != ESP_OK) return err;
-    vec_t vec = {s_list, 0, s_cap};
-    err = parse_xml(buf, &vec);
+    vec_t vec = {0};
+    err = parse_xml(buf, &vec, NULL);
     free(buf);
+    if (err != ESP_OK) {
+        free(vec.v);
+        return err;
+    }
+    free(s_list);
     s_list = vec.v;
     s_cap = vec.cap;
-    s_count = err == ESP_OK ? vec.n : 0;
+    s_count = vec.n;
     ESP_LOGI(TAG, "loaded %u entries from %s", (unsigned)s_count, path);
     return err;
 }
 
-// Writes to "<path>.tmp" and swaps it in, so a power cut mid-write leaves the
-// previous file (or the .tmp, which load picks up) rather than a torn one.
-static esp_err_t save_file(const char *path)
-{
-    char tmp_path[128];
-    snprintf(tmp_path, sizeof(tmp_path), "%s" TMP_SUFFIX, path);
-    FILE *f = fopen(tmp_path, "w");
-    ESP_RETURN_ON_FALSE(f, ESP_FAIL, TAG, "open %s", tmp_path);
+typedef struct {
+    const server_entry_t *entries;
+    size_t count;
+} server_xml_t;
 
+static esp_err_t server_file_write(void *ctx, const char *data, size_t len)
+{
+    return fwrite(data, 1, len, ctx) == len ? ESP_OK : ESP_FAIL;
+}
+
+static esp_err_t write_server_file(FILE *f, void *ctx)
+{
+    const server_xml_t *data = ctx;
     char when[32] = "";
     time_t now = time(NULL);
     if (now > 1700000000) {
@@ -252,41 +256,25 @@ static esp_err_t save_file(const char *path)
     }
     fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     fprintf(f, "<echolink-servers version=\"1\" generated=\"%s\">\n", when);
-    for (size_t i = 0; i < s_count; i++) {
-        const server_entry_t *e = &s_list[i];
-        fputs("  <server call=\"", f);
-        xml_escape(f, e->call);
-        fprintf(f, "\" node=\"%lu\" type=\"%s\" desc=\"", (unsigned long)e->node, TYPE_NAMES[e->type]);
-        xml_escape(f, e->desc);
-        fputs("\" ip=\"", f);
-        if (e->ip) {
-            struct in_addr a = {.s_addr = e->ip};
-            fputs(inet_ntoa(a), f);
-        }
-        fputs("\" host=\"", f);
-        xml_escape(f, e->host);
-        fprintf(f, "\"%s%s/>\n", e->manual ? " manual=\"true\"" : "", e->favorite ? " favorite=\"true\"" : "");
+    for (size_t i = 0; i < data->count; i++) {
+        esp_err_t err = write_server_entry(server_file_write, f, &data->entries[i]);
+        if (err != ESP_OK) return err;
     }
     fprintf(f, "</echolink-servers>\n");
-    bool ok = !ferror(f);
-    ok = (fclose(f) == 0) && ok;
-    ESP_RETURN_ON_FALSE(ok, ESP_FAIL, TAG, "write %s", tmp_path);
-
-    remove(path);
-    ESP_RETURN_ON_FALSE(rename(tmp_path, path) == 0, ESP_FAIL, TAG, "rename to %s", path);
-    ESP_LOGI(TAG, "saved %u entries to %s", (unsigned)s_count, path);
-    return ESP_OK;
+    return ferror(f) ? ESP_FAIL : ESP_OK;
 }
 
-// A save interrupted between remove() and rename() leaves only the .tmp.
-static void recover_tmp(const char *path)
+static esp_err_t save_list(const char *path, const server_entry_t *entries, size_t count)
 {
-    char tmp_path[128];
-    snprintf(tmp_path, sizeof(tmp_path), "%s" TMP_SUFFIX, path);
-    if (!file_exists(path) && file_exists(tmp_path)) {
-        ESP_LOGW(TAG, "recovering %s from %s", path, tmp_path);
-        rename(tmp_path, path);
-    }
+    server_xml_t data = {.entries = entries, .count = count};
+    esp_err_t err = file_store_write(path, write_server_file, &data);
+    if (err == ESP_OK) ESP_LOGI(TAG, "saved %u entries to %s", (unsigned)count, path);
+    return err;
+}
+
+static esp_err_t save_file(const char *path)
+{
+    return save_list(path, s_list, s_count);
 }
 
 // ---- public ----------------------------------------------------------------
@@ -305,8 +293,11 @@ esp_err_t server_list_init(void)
                         "mount " MOUNT_POINT);
     s_mounted = true;
 
-    recover_tmp(SERVER_LIST_DEFAULT_PATH);
-    recover_tmp(SERVER_LIST_PATH);
+    esp_err_t default_recovery = file_store_recover(SERVER_LIST_DEFAULT_PATH);
+    esp_err_t working_recovery = file_store_recover(SERVER_LIST_PATH);
+    if (default_recovery != ESP_OK || working_recovery != ESP_OK) {
+        ESP_LOGE(TAG, "server list recovery failed");
+    }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     esp_err_t err = load_file(SERVER_LIST_PATH);
@@ -501,21 +492,28 @@ esp_err_t server_list_import_buffer(const char *xml, size_t *count)
 {
     ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "storage not mounted");
     vec_t vec = {0};
-    esp_err_t err = parse_xml(xml, &vec);
+    bool backup = false;
+    esp_err_t err = parse_xml(xml, &vec, &backup);
     // A complete backup may intentionally contain an empty server list. Old
     // server-list XML still needs at least one entry to avoid accidental wipes.
-    if (err == ESP_OK && !vec.n && !strstr(xml, "<echolink-backup")) err = ESP_ERR_NOT_FOUND;
+    if (err == ESP_OK && !vec.n && !backup) err = ESP_ERR_NOT_FOUND;
     if (err != ESP_OK) {
         free(vec.v);
         return err;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    free(s_list);
-    s_list = vec.v;
-    s_count = vec.n;
-    s_cap = vec.cap;
-    err = save_file(SERVER_LIST_PATH);
+    err = save_list(SERVER_LIST_PATH, vec.v, vec.n);
+    if (err == ESP_OK) {
+        free(s_list);
+        s_list = vec.v;
+        s_count = vec.n;
+        s_cap = vec.cap;
+    }
     xSemaphoreGive(s_lock);
+    if (err != ESP_OK) {
+        free(vec.v);
+        return err;
+    }
     if (count) *count = vec.n;
     ESP_LOGI(TAG, "imported %u entries", (unsigned)vec.n);
     notify_changed();
@@ -524,9 +522,12 @@ esp_err_t server_list_import_buffer(const char *xml, size_t *count)
 
 esp_err_t server_list_import_file(const char *path, size_t *count)
 {
+    ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "storage not mounted");
     char *buf;
     size_t len;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     esp_err_t err = read_file(path, &buf, &len);
+    xSemaphoreGive(s_lock);
     if (err != ESP_OK) return err;
     err = server_list_import_buffer(buf, count);
     free(buf);
@@ -539,6 +540,22 @@ esp_err_t server_list_export_file(const char *path)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     esp_err_t err = save_file(path);
     xSemaphoreGive(s_lock);
+    return err;
+}
+
+esp_err_t server_list_export_entries(server_list_write_cb_t write, void *ctx)
+{
+    ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "storage not mounted");
+    ESP_RETURN_ON_FALSE(write, ESP_ERR_INVALID_ARG, TAG, "missing backup writer");
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    size_t count = s_count;
+    server_entry_t *snapshot = count ? heap_caps_malloc(count * sizeof(*snapshot), MALLOC_CAP_SPIRAM) : NULL;
+    if (count && snapshot) memcpy(snapshot, s_list, count * sizeof(*snapshot));
+    xSemaphoreGive(s_lock);
+    ESP_RETURN_ON_FALSE(!count || snapshot, ESP_ERR_NO_MEM, TAG, "allocate backup snapshot");
+    esp_err_t err = ESP_OK;
+    for (size_t i = 0; i < count && err == ESP_OK; i++) err = write_server_entry(write, ctx, &snapshot[i]);
+    free(snapshot);
     return err;
 }
 

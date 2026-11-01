@@ -13,6 +13,7 @@
 
 static const char *TAG = "ui";
 
+#define UI_REFRESH_MS           100
 #define STATUS_REFRESH_MS       1000
 #define BATTERY_REFRESH_TICKS   30
 
@@ -54,6 +55,16 @@ static void status_update(lv_timer_t *timer)
     s_battery_tick = (s_battery_tick + 1) % BATTERY_REFRESH_TICKS;
 }
 
+static void ui_tick(lv_timer_t *timer)
+{
+    static unsigned status_ticks;
+    if (++status_ticks >= STATUS_REFRESH_MS / UI_REFRESH_MS) {
+        status_ticks = 0;
+        status_update(NULL);
+    }
+    ui_chat_update();
+}
+
 static void status_ensure(void)
 {
     if (!s_status_bar) {
@@ -83,7 +94,7 @@ static void status_ensure(void)
 
         lv_obj_align(s_status_bar, LV_ALIGN_TOP_RIGHT, -UI_PAD, UI_SAFE_TOP + UI_PAD);
         status_update(NULL);
-        lv_timer_create(status_update, STATUS_REFRESH_MS, NULL);
+        lv_timer_create(ui_tick, UI_REFRESH_MS, NULL);
     }
     lv_obj_move_foreground(s_status_bar);
 }
@@ -225,6 +236,11 @@ static lv_obj_t *s_modal;
 static lv_timer_t *s_modal_timer;
 static void (*s_modal_on_close)(void);
 
+bool ui_modal_is_open(void)
+{
+    return s_modal != NULL;
+}
+
 static lv_obj_t *modal_box(void)
 {
     if (s_modal_timer) {
@@ -353,15 +369,17 @@ static void job_task(void *p)
     vTaskDelete(NULL);
 }
 
-void ui_run_async(const char *name, void (*fn)(void *), void *arg)
+bool ui_run_async(const char *name, void (*fn)(void *), void *arg)
 {
     job_t *job = malloc(sizeof(*job));
-    if (!job) return;
+    if (!job) return false;
     *job = (job_t){fn, arg};
     if (xTaskCreate(job_task, name, 6144, job, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "could not start %s", name);
         free(job);
+        return false;
     }
+    return true;
 }
 
 // ---- boot ------------------------------------------------------------------
@@ -403,7 +421,8 @@ static void show_stage(void)
         case STAGE_ACCOUNT: ui_account_onboard(); break;
         default: ui_home_show(); break;
         }
-        if (prev == STAGE_WIFI) ui_wifi_destroy();
+        // A manual Wi-Fi edit can be open while the onboarding stage is Home.
+        if (next != STAGE_WIFI) ui_wifi_destroy();
         if (prev == STAGE_ACCOUNT) ui_account_destroy();
     }
     ui_home_refresh_account();

@@ -296,15 +296,15 @@ static void handle_text(const uint8_t *buf, size_t len)
 
 static void handle_audio(const uint8_t *buf, size_t len, uint32_t from)
 {
-    if (q.state == QSO_IDLE || from != q.remote_ip) return;
+    if (!len || q.state == QSO_IDLE || from != q.remote_ip) return;
     q.last_rx_us = esp_timer_get_time();
 
     if (buf[0] != 0xc0) {
         if (len > 6 && !memcmp(buf + 1, "NDATA", 5)) handle_text(buf, len);
         return;
     }
-    if (buf[1] != 3 || len < AUDIO_PKT_BYTES) {
-        ESP_LOGD(TAG, "ignoring audio packet pt=%d len=%u", buf[1], (unsigned)len);
+    if (len < AUDIO_PKT_BYTES || buf[1] != 3) {
+        ESP_LOGD(TAG, "ignoring audio packet pt=%d len=%u", len > 1 ? buf[1] : -1, (unsigned)len);
         return;
     }
     q.rx_packets++;
@@ -313,7 +313,11 @@ static void handle_audio(const uint8_t *buf, size_t len, uint32_t from)
 
     int16_t pcm[FRAMES_PER_PACKET * AUDIO_FRAME];
     for (int i = 0; i < FRAMES_PER_PACKET; i++) {
-        gsm_decode(q.dec, (gsm_byte *)buf + RTP_HDR_BYTES + i * GSM_FRAME_BYTES, pcm + i * AUDIO_FRAME);
+        if (gsm_decode(q.dec, (gsm_byte *)buf + RTP_HDR_BYTES + i * GSM_FRAME_BYTES,
+                       pcm + i * AUDIO_FRAME) != 0) {
+            ESP_LOGW(TAG, "discarding invalid GSM audio packet");
+            return;
+        }
     }
     audio_play_push(pcm, FRAMES_PER_PACKET * AUDIO_FRAME);
 }

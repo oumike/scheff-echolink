@@ -88,13 +88,20 @@ esp_err_t server_list_put(const char *orig_call, const server_entry_t *entry);
 esp_err_t server_list_delete(const char *call);
 
 // Replaces the working list with the <server> entries in `xml` (a file in the
-// format above) and saves it. ESP_ERR_NOT_FOUND if it has no entries, in
-// which case nothing changes. The default file is never touched.
+// format above, or a complete backup) and saves it. Empty legacy lists return
+// ESP_ERR_NOT_FOUND; complete backups can intentionally restore an empty list.
+// Validation or write failures leave the active list unchanged. The default
+// file is never touched.
 esp_err_t server_list_import_buffer(const char *xml, size_t *count);
 esp_err_t server_list_import_file(const char *path, size_t *count);
 
 // Writes the working list to `path` (e.g. on the SD card).
 esp_err_t server_list_export_file(const char *path);
+
+typedef esp_err_t (*server_list_write_cb_t)(void *ctx, const char *data, size_t len);
+// Streams <server> elements from a consistent RAM snapshot, without holding
+// the list lock or a FAT file open during a potentially slow network transfer.
+esp_err_t server_list_export_entries(server_list_write_cb_t write, void *ctx);
 
 // Registers a callback run (from the caller's task) whenever the list changes.
 void server_list_set_changed_cb(void (*cb)(void));

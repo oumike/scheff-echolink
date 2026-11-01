@@ -43,7 +43,7 @@ static const char *TAG = "display";
 #define GT911_RESOLUTION   0x8048
 #define GT911_PRODUCT_ID   0x8140
 #define GT911_STATUS       0x814e
-#define GT911_POINT_1      0x8150
+#define GT911_POINT_1    0x814F
 #define TOUCH_RELEASE_US   (250 * 1000)
 
 #define LP5814_ENABLE      0x00

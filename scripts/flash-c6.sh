@@ -24,11 +24,13 @@ if [[ -z "$PORT" ]]; then
 fi
 
 if [[ -z "$FIRMWARE" ]]; then
-    FIRMWARE=$(find \
+    FIRMWARE=$(for dir in \
         "$HOME/.platformio-p4/packages/framework-arduinoespressif32-libs/hosted" \
-        "$HOME/.platformio/packages/framework-arduinoespressif32-libs/hosted" \
-        -type f -name 'esp32c6-v2.12.*.bin' 2>/dev/null \
-        | awk -F/ '{print $NF "\t" $0}' | sort -V | tail -1 | cut -f2)
+        "$HOME/.platformio/packages/framework-arduinoespressif32-libs/hosted"; do
+        if [[ -d "$dir" ]]; then
+            find "$dir" -type f -name 'esp32c6-v2.12.*.bin' || exit $?
+        fi
+    done | awk -F/ '{print $NF "\t" $0}' | sort -V | tail -1 | cut -f2)
 fi
 
 if [[ -z "$FIRMWARE" || ! -f "$FIRMWARE" ]]; then

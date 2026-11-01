@@ -411,6 +411,16 @@ static void edit_account_clicked(lv_event_t *e)
     ui_account_edit();
 }
 
+static void edit_wifi_clicked(lv_event_t *e)
+{
+    ui_wifi_show();
+}
+
+bool ui_home_is_active(void)
+{
+    return s_scr && lv_screen_active() == s_scr && !s_form;
+}
+
 void ui_home_refresh_account(void)
 {
     if (!s_callsign) return;
@@ -435,12 +445,24 @@ void ui_home_show(void)
         lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
     #endif
 
-        // Callsign header with a small Edit button under it.
+        // Callsign header with account and Wi-Fi settings underneath.
         s_callsign = ui_title(col, "");
-        lv_obj_t *edit = ui_button(col, LV_SYMBOL_EDIT "  Edit", UI_COLOR_PANEL, edit_account_clicked, NULL);
+        lv_obj_t *actions = lv_obj_create(col);
+        lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_all(actions, 0, 0);
+        lv_obj_set_style_pad_column(actions, UI_GAP, 0);
+        lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(actions, 0, 0);
+        lv_obj_remove_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *edit = ui_button(actions, LV_SYMBOL_EDIT "  Edit", UI_COLOR_PANEL, edit_account_clicked, NULL);
         lv_obj_set_size(edit, LV_SIZE_CONTENT, UI_EDIT_BUTTON_H);
         lv_obj_set_style_pad_hor(edit, UI_PAD * 2, 0);
         lv_obj_set_style_text_font(lv_obj_get_child(edit, 0), UI_FONT_SMALL, 0);
+        lv_obj_t *wifi = ui_button(actions, LV_SYMBOL_WIFI "  Wi-Fi", UI_COLOR_PANEL, edit_wifi_clicked, NULL);
+        lv_obj_set_size(wifi, LV_SIZE_CONTENT, UI_EDIT_BUTTON_H);
+        lv_obj_set_style_pad_hor(wifi, UI_PAD * 2, 0);
+        lv_obj_set_style_text_font(lv_obj_get_child(wifi, 0), UI_FONT_SMALL, 0);
         s_status = ui_label(col, "", UI_FONT_SMALL, UI_COLOR_MUTED);
         s_web = ui_label(col, "", UI_FONT_SMALL, UI_COLOR_MUTED);
 

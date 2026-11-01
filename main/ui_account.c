@@ -75,6 +75,11 @@ void ui_account_destroy(void)
     }
 }
 
+bool ui_account_is_open(void)
+{
+    return s_root != NULL;
+}
+
 // Saving advances onboarding (ui.c) and closes this form.
 static void save_clicked(lv_event_t *e)
 {

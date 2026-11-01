@@ -1,5 +1,5 @@
-// Wi-Fi setup: shown on first boot (no saved network). Scan and pick from a
-// list, or type the SSID; then the password (not masked) and Join.
+// Wi-Fi setup: shown on first boot, or opened manually from Home. Scan and
+// pick from a list, or type the SSID; then the password (not masked) and Join.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +16,7 @@
 #define HINT_DEFAULT "Open networks don't need a password - leave it blank."
 #define HINT_OPEN    "This network is open - no password needed. Tap Join."
 
-static lv_obj_t *s_setup_scr, *s_ssid, *s_pass, *s_hint, *s_kb, *s_web_hint;
+static lv_obj_t *s_setup_scr, *s_ssid, *s_pass, *s_hint, *s_kb, *s_web_hint, *s_back;
 static lv_obj_t *s_scan_scr, *s_scan_list, *s_scan_status, *s_scan_again;
 
 static net_wifi_ap_t s_aps[SCAN_MAX];
@@ -48,7 +48,8 @@ void ui_wifi_destroy(void)
     if (s_setup_scr) lv_obj_delete_async(s_setup_scr);
     if (s_scan_scr) lv_obj_delete_async(s_scan_scr);
     s_setup_scr = s_scan_scr = NULL;
-    s_web_hint = NULL;
+    s_ssid = s_pass = s_hint = s_kb = s_web_hint = s_back = NULL;
+    s_scan_list = s_scan_status = s_scan_again = NULL;
 }
 
 static void join_worker(void *arg)
@@ -171,13 +172,14 @@ static void scan_worker(void *arg)
 
 static void start_scan(void)
 {
-    if (s_scanning) return;
-    s_scanning = true;
     lv_obj_clean(s_scan_list);
     lv_obj_t *sp = lv_spinner_create(s_scan_list);
     lv_obj_set_size(sp, UI_SPINNER_SIZE, UI_SPINNER_SIZE);
     lv_label_set_text(s_scan_status, "Scanning for networks...");
     lv_obj_add_state(s_scan_again, LV_STATE_DISABLED);
+    // Reopening setup can reuse a scan still running after Back.
+    if (s_scanning) return;
+    s_scanning = true;
     ui_run_async("wifi_scan", scan_worker, NULL);
 }
 
@@ -226,10 +228,26 @@ static void scan_clicked(lv_event_t *e)
 
 // ---- setup screen ----------------------------------------------------------
 
+static void setup_back(lv_event_t *e)
+{
+    ui_home_show();
+    ui_wifi_destroy();
+}
+
 void ui_wifi_show(void)
 {
+    if (s_setup_scr) {
+        if (s_back && !onboard_complete()) lv_obj_add_flag(s_back, LV_OBJ_FLAG_HIDDEN);
+        lv_screen_load(s_setup_scr);
+        return;
+    }
     lv_obj_t *col = ui_screen_create(&s_setup_scr, &s_kb);
 
+    if (onboard_complete()) {
+        s_back = ui_button(col, LV_SYMBOL_LEFT "  Back", UI_COLOR_PANEL, setup_back, NULL);
+        lv_obj_set_width(s_back, LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_hor(s_back, UI_PAD * 2, 0);
+    }
     ui_title(col, "Wi-Fi Setup");
     ui_label(col, "Scan for a nearby network, or type its name.", UI_FONT_SMALL, UI_COLOR_MUTED);
     ui_button(col, LV_SYMBOL_WIFI "  Scan for networks", UI_COLOR_ACCENT, scan_clicked, NULL);
@@ -247,6 +265,9 @@ void ui_wifi_show(void)
     s_web_hint = ui_label(col, "", UI_FONT_SMALL, UI_COLOR_MUTED);
     ui_web_hint_update(s_web_hint);
 
-    if (g_settings.wifi_ssid[0]) lv_textarea_set_text(s_ssid, g_settings.wifi_ssid);
+    if (g_settings.wifi_ssid[0]) {
+        lv_textarea_set_text(s_ssid, g_settings.wifi_ssid);
+        lv_textarea_set_text(s_pass, g_settings.wifi_pass);
+    }
     lv_screen_load(s_setup_scr);
 }

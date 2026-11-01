@@ -124,10 +124,13 @@ esp_err_t net_wifi_init(void)
 
 esp_err_t net_wifi_connect(const char *ssid, const char *pass)
 {
-    if (!ssid || !*ssid) return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_FALSE(ssid && *ssid, ESP_ERR_INVALID_ARG, TAG, "empty SSID");
     wifi_config_t wc = {0};
-    strlcpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid));
-    strlcpy((char *)wc.sta.password, pass ? pass : "", sizeof(wc.sta.password));
+    size_t ssid_len = strlen(ssid), pass_len = pass ? strlen(pass) : 0;
+    ESP_RETURN_ON_FALSE(ssid_len <= sizeof(wc.sta.ssid) && pass_len <= sizeof(wc.sta.password),
+                        ESP_ERR_INVALID_ARG, TAG, "Wi-Fi credentials too long");
+    memcpy(wc.sta.ssid, ssid, ssid_len);
+    if (pass_len) memcpy(wc.sta.password, pass, pass_len);
     wc.sta.threshold.authmode = (pass && *pass) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     wc.sta.pmf_cfg.capable = true;
 

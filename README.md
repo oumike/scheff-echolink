@@ -111,8 +111,10 @@ Notes:
 - All targets use the script's separate PlatformIO core
   (`~/.platformio-p4`). This stops other projects' `espressif32` versions from
   replacing the pioarduino platform.
-- ESP-IDF won't use a build directory whose path has a space in it, so the
-  build goes to `~/.platformio-p4/build/scheff-echolink` instead.
+- ESP-IDF needs space-free build and framework paths. The script builds in
+  `~/.platformio-p4/build/scheff-echolink`; `ECHOLINK_BUILD_DIR` overrides it.
+  If the core directory points to a volume with spaces, use a real space-free
+  core/package installation, not just a symlink to the framework.
 - `sdkconfig.pio.defaults` selects the board's ECO2 (pre-v3) P4 silicon.
 
 On an aarch64 Linux host, Espressif doesn't ship a ninja binary. Run
@@ -141,6 +143,8 @@ controls, and scroll workflows that do not fit in one viewport.
 - **Home** is where the device boots once onboarding is done. Your callsign is
   at the top, with an **Edit** button under it that changes the account.
   Saving logs in to the directory again straight away.
+  **Wi-Fi** reopens network setup even while offline; **Back** returns without
+  saving changes. A successful join saves the network and restarts the device.
   - **Search** by callsign, description or node number, or pick a letter
     (A-Z, 0-9) to list the known nodes starting with it. **`*`** lists your
     favorites; Home opens on it when you have some. Lists show 20 per page.
@@ -154,6 +158,8 @@ controls, and scroll workflows that do not fit in one viewport.
   the Wio Tracker L2 **user button** anywhere. In Chat it lights the talk
   button like the on-screen one does.
 - **Chat** opens once connected:
+  - Incoming and console-initiated calls also open Chat from Home. Active
+    settings forms are left open until you finish or return.
   - It shows the station and the info text it sends when you connect.
   - The large button is **green** when you can talk; hold it to transmit.
   - It turns **red** while someone else is talking.
@@ -199,6 +205,8 @@ The page also manages servers:
   so they travel with exports and imports. An import replaces the working
   list; the default list is never touched. Complete backups may contain an
   empty server list; legacy files with no `<server>` entries are rejected.
+  Imports validate the complete XML before applying changes. Failed server-list
+  writes retain the active list, and failed SD exports retain the previous backup.
 
 The page never displays saved passwords, but complete backup exports contain
 them. Leaving the EchoLink password blank keeps the saved one. The page has no
@@ -284,6 +292,8 @@ main/
   display.*        RM69A10 MIPI-DSI panel + GT9895 touch, LVGL port
   lv_mem_psram.c   LVGL allocations in PSRAM
   server_list.*    known-node XML lists on the /data FAT partition
+  xml.*            validated EchoLink XML parsing via Expat
+  file_store.*     recoverable file replacement and complete text reads
   ui*.c            LVGL screens: Wi-Fi setup, account, Home, Chat
   onboard.*        onboarding state shared by the screen and the web config
   web_config.c     setup hotspot, captive DNS and HTTP API; page in web/index.html
@@ -295,6 +305,16 @@ third_party/esp_hosted  LilyGO ESP-Hosted fork (submodule)
 ```
 
 ## Verification
+
+Run the checked-in host regressions with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+They require Python 3, a native C compiler with AddressSanitizer/UBSan, and
+Expat headers/library. They compile production logic with hardware, RTOS and
+LVGL test doubles; no board, network service or real flasher is used.
 
 The protocol code follows SvxLink's `echolib`. The following were checked on
 the host:

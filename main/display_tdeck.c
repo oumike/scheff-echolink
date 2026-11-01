@@ -21,7 +21,7 @@ static const char *TAG = "display";
 #define GT911_ADDR         0x5d
 #define GT911_PRODUCT_ID   0x8140
 #define GT911_STATUS       0x814e
-#define GT911_POINT_1      0x8150
+#define GT911_POINT_1    0x814F
 #define TOUCH_RELEASE_US   (250 * 1000)
 
 static esp_lcd_panel_io_handle_t s_lcd_io;

@@ -1,6 +1,6 @@
 set(COMMON_SRCS
      "app_main.c" "net_wifi.c" "settings.c" "el_directory.c" "el_qso.c"
-     "console_cmds.c" "lv_mem_psram.c" "server_list.c"
+     "console_cmds.c" "lv_mem_psram.c" "server_list.c" "xml.c" "file_store.c"
      "ui.c" "ui_wifi.c" "ui_account.c" "ui_home.c" "ui_chat.c"
      "onboard.c" "web_config.c")
 
@@ -29,4 +29,4 @@ idf_component_register(
     PRIV_REQUIRES gsm esp_driver_i2c esp_driver_i2s esp_driver_gpio
                   esp_netif esp_event esp_wifi nvs_flash console lwip esp_timer
                   esp_lcd esp_lvgl_port lvgl fatfs wear_levelling
-                      esp_http_server json sdmmc ${PLATFORM_REQUIRES})
+                      esp_http_server json sdmmc expat ${PLATFORM_REQUIRES})

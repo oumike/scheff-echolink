@@ -4,6 +4,7 @@ dependencies.lock
 sdkconfig
 sdkconfig.old
 .pio/
+__pycache__/
 sdkconfig.tdisplay-p4
 sdkconfig.tdisplay-p4.old
 sdkconfig.wio-tracker-l2

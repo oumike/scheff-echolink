@@ -244,26 +244,22 @@ esp_err_t el_dir_fetch_list(void)
 static void dir_task(void *arg)
 {
     TickType_t next_login = 0, next_list = 0;
-    el_dir_status_t sent = EL_DIR_OFFLINE;
+    el_dir_status_t attempted = EL_DIR_OFFLINE;
+    bool retry = false;
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000));
         if (!net_wifi_has_ip()) continue;
 
         TickType_t now = xTaskGetTickCount();
-        if (s_relogin) {
-            s_relogin = false;
-            next_login = now;
-        }
+        bool relogin = s_relogin;
+        if (relogin) s_relogin = false;
         el_dir_status_t want = s_want;
-        if (want != sent || (want != EL_DIR_OFFLINE && (int32_t)(now - next_login) >= 0)) {
-            if (el_dir_login(want) == ESP_OK) {
-                sent = want;
-                next_login = now + pdMS_TO_TICKS(REFRESH_MS);
-            } else {
-                next_login = now + pdMS_TO_TICKS(60 * 1000);
-                sent = EL_DIR_OFFLINE;
-                if (want != EL_DIR_OFFLINE) continue;
-            }
+        if (relogin || want != attempted ||
+            ((retry || want != EL_DIR_OFFLINE) && (int32_t)(now - next_login) >= 0)) {
+            attempted = want;
+            retry = el_dir_login(want) != ESP_OK;
+            next_login = xTaskGetTickCount() + pdMS_TO_TICKS(retry ? 60 * 1000 : REFRESH_MS);
+            if (retry && want != EL_DIR_OFFLINE) continue;
         }
         if (s_logged_in && (!s_count || (int32_t)(now - next_list) >= 0)) {
             next_list = now + pdMS_TO_TICKS(el_dir_fetch_list() == ESP_OK ? LIST_REFRESH_MS : 60 * 1000);

@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"
@@ -17,15 +18,15 @@
 #include "ui_internal.h"
 
 #define CONNECT_TIMEOUT_MS 45000
-#define POLL_MS            100
 
 static server_entry_t s_target;
 static bool s_connecting;
 
-static lv_obj_t *s_scr, *s_name, *s_info, *s_volume_value, *s_talk, *s_talk_label;
-static lv_timer_t *s_poll;
+static lv_obj_t *s_scr, *s_title, *s_name, *s_node, *s_info, *s_volume_value, *s_talk, *s_talk_label;
 static char s_info_cache[512];
-static bool s_leaving;
+static char s_peer_call[16], s_description[48];
+static uint32_t s_peer_ip;
+static bool s_disconnected;
 
 static void chat_show(void);
 
@@ -35,8 +36,8 @@ static void connect_fail(const char *msg)
 {
     display_lock();
     ui_modal_message(msg, UI_COLOR_STOP, true, NULL);
-    display_unlock();
     s_connecting = false;
+    display_unlock();
 }
 
 // Picks what to hand el_qso_connect(): a fixed host for manual entries,
@@ -79,7 +80,8 @@ static bool resolve_target(char *out, size_t size, char *err, size_t err_size)
 
 static void connected_continue(void)
 {
-    chat_show();
+    s_connecting = false;
+    ui_chat_update();
 }
 
 static void connect_worker(void *arg)
@@ -123,7 +125,6 @@ static void connect_worker(void *arg)
         }
         connect_fail(err);
     }
-    s_connecting = false;
 }
 
 void ui_chat_connect(const server_entry_t *entry)
@@ -134,25 +135,23 @@ void ui_chat_connect(const server_entry_t *entry)
     char msg[64];
     snprintf(msg, sizeof(msg), "Connecting to\n%s...", entry->call);
     ui_modal_busy(msg);
-    ui_run_async("qso_connect", connect_worker, NULL);
+    if (!ui_run_async("qso_connect", connect_worker, NULL)) {
+        connect_fail("Couldn't start the connection.\nTry again.");
+    }
 }
 
 // ---- chat screen -----------------------------------------------------------
 
 static void chat_close(void)
 {
-    if (s_poll) {
-        lv_timer_delete(s_poll);
-        s_poll = NULL;
-    }
     ui_home_show();
     if (s_scr) lv_obj_delete_async(s_scr);
     s_scr = NULL;
+    s_title = s_name = s_node = s_info = s_volume_value = s_talk = s_talk_label = NULL;
 }
 
 static void leave_clicked(lv_event_t *e)
 {
-    s_leaving = true;
     el_qso_disconnect();
     chat_close();
 }
@@ -164,7 +163,7 @@ static void talk_event(lv_event_t *e)
         qso_status_t st;
         el_qso_get_status(&st);
         // Half duplex: don't key up over someone else.
-        if (!st.receiving) el_qso_set_ptt(true);
+        if (st.state == QSO_CONNECTED && !st.receiving) el_qso_set_ptt(true);
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         el_qso_set_ptt(false);
     }
@@ -190,17 +189,52 @@ static void volume_event(lv_event_t *e)
     }
 }
 
-static void poll_cb(lv_timer_t *t)
+static void update_identity(const qso_status_t *st)
 {
+    char call[sizeof(s_peer_call)];
+    struct in_addr addr = {.s_addr = st->remote_ip};
+    strlcpy(call, st->remote_call[0] ? st->remote_call : inet_ntoa(addr), sizeof(call));
+    if (strcmp(call, s_peer_call) || st->remote_ip != s_peer_ip) {
+        strlcpy(s_peer_call, call, sizeof(s_peer_call));
+        s_peer_ip = st->remote_ip;
+        lv_label_set_text(s_title, call);
+
+        uint32_t node = 0;
+        s_description[0] = 0;
+        el_station_t station;
+        if (!strcasecmp(call, s_target.call)) {
+            node = s_target.node;
+            strlcpy(s_description, s_target.desc, sizeof(s_description));
+        } else if (el_dir_find(call, &station)) {
+            node = station.node;
+            strlcpy(s_description, station.desc, sizeof(s_description));
+        }
+        if (node) {
+            lv_label_set_text_fmt(s_node, "Node %lu", (unsigned long)node);
+            lv_obj_remove_flag(s_node, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_node, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_label_set_text(s_name, st->remote_name[0] ? st->remote_name : s_description);
+}
+
+void ui_chat_update(void)
+{
+    if (!s_scr && (s_connecting || !ui_home_is_active() || ui_account_is_open() || ui_modal_is_open())) return;
+
     qso_status_t st;
     el_qso_get_status(&st);
+    if (!s_scr) {
+        if (st.state != QSO_CONNECTED) return;
+        chat_show();
+    }
+    if (s_disconnected) return;
 
     if (st.state != QSO_CONNECTED) {
-        lv_timer_delete(s_poll);
-        s_poll = NULL;
-        if (s_leaving) return;
+        s_disconnected = true;
         char msg[96];
-        snprintf(msg, sizeof(msg), "Disconnected from %s\n(%s)", s_target.call,
+        snprintf(msg, sizeof(msg), "Disconnected from %s\n(%s)", s_peer_call,
                  st.end_reason[0] ? st.end_reason : "link lost");
         ui_modal_message(msg, UI_COLOR_WARN, true, chat_close);
         return;
@@ -214,7 +248,7 @@ static void poll_cb(lv_timer_t *t)
         set_talk(UI_COLOR_GO, LV_SYMBOL_AUDIO "  HOLD TO TALK");
     }
 
-    if (st.remote_name[0]) lv_label_set_text(s_name, st.remote_name);
+    update_identity(&st);
 
     char info[sizeof(s_info_cache)];
     el_qso_get_info(info, sizeof(info));
@@ -226,22 +260,20 @@ static void poll_cb(lv_timer_t *t)
 
 static void chat_show(void)
 {
-    if (s_scr) lv_obj_delete(s_scr);
-    s_leaving = false;
+    if (s_scr) return;
+    s_disconnected = false;
     s_info_cache[0] = 0;
+    s_peer_call[0] = 0;
+    s_peer_ip = 0;
 
     lv_obj_t *col = ui_screen_create(&s_scr, NULL);
 #if !UI_COMPACT
     lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
 #endif
 
-    ui_title(col, s_target.call);
-    s_name = ui_label(col, s_target.desc[0] ? s_target.desc : "", UI_FONT, lv_color_white());
-    if (s_target.node) {
-        char meta[48];
-        snprintf(meta, sizeof(meta), "Node %lu", (unsigned long)s_target.node);
-        ui_label(col, meta, UI_FONT_SMALL, UI_COLOR_ACCENT);
-    }
+    s_title = ui_title(col, "");
+    s_name = ui_label(col, "", UI_FONT, lv_color_white());
+    s_node = ui_label(col, "", UI_FONT_SMALL, UI_COLOR_ACCENT);
 
     // Station info the remote sends on connect (users, location, ...).
     lv_obj_t *box = lv_obj_create(col);
@@ -295,6 +327,5 @@ static void chat_show(void)
 
     ui_button(col, LV_SYMBOL_CLOSE "  Leave", UI_COLOR_PANEL, leave_clicked, NULL);
 
-    s_poll = lv_timer_create(poll_cb, POLL_MS, NULL);
     lv_screen_load(s_scr);
 }

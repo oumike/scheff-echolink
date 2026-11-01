@@ -11,15 +11,18 @@
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "audio.h"
 #include "el_directory.h"
 #include "el_qso.h"
+#include "file_store.h"
 #include "net_wifi.h"
 #include "onboard.h"
 #include "sdcard.h"
 #include "server_list.h"
 #include "settings.h"
+#include "xml.h"
 
 static const char *TAG = "web";
 
@@ -30,6 +33,7 @@ static const char *TAG = "web";
 #define BODY_MAX          1024
 #define SCAN_MAX          30
 #define IMPORT_MAX        ((2 * 1024 * 1024) + 4096)
+#define IMPORT_TIMEOUT_MS 30000
 #define BUCKET_MAX        3000
 #define BACKUP_FILE_NAME  "scheff-echolink-backup.xml"
 #define SD_BACKUP_PATH    SDCARD_MOUNT "/" BACKUP_FILE_NAME
@@ -164,6 +168,9 @@ static esp_err_t backup_write_xml(backup_write_cb_t write, void *ctx, const char
         case '>': entity = "&gt;"; break;
         case '"': entity = "&quot;"; break;
         case '\'': entity = "&apos;"; break;
+        case '\t': entity = "&#9;"; break;
+        case '\n': entity = "&#10;"; break;
+        case '\r': entity = "&#13;"; break;
         default: break;
         }
         if (entity) {
@@ -207,107 +214,21 @@ static esp_err_t backup_write(backup_write_cb_t write, void *ctx)
 #undef WRITE_SETTING
     if (err == ESP_OK) err = backup_write_text(write, ctx, "/>\n  <servers>\n");
 
-    FILE *servers = fopen(SERVER_LIST_PATH, "r");
-    if (servers) {
-        char line[512];
-        while (err == ESP_OK && fgets(line, sizeof(line), servers)) {
-            char *entry = strstr(line, "<server ");
-            if (entry) {
-                err = backup_write_text(write, ctx, "    ");
-                if (err == ESP_OK) err = backup_write_text(write, ctx, entry);
-            }
-        }
-        if (ferror(servers)) err = ESP_FAIL;
-        fclose(servers);
-    }
+    if (err == ESP_OK) err = server_list_export_entries(write, ctx);
     if (err == ESP_OK) err = backup_write_text(write, ctx, "  </servers>\n</echolink-backup>\n");
     return err;
 }
 
-// Returns 1 when found, 0 when absent and -1 for malformed or oversized data.
-static int backup_xml_attr(const char *element, const char *end, const char *name, char *out, size_t size)
-{
-    size_t name_len = strlen(name);
-    for (const char *p = element + 1; p + name_len + 2 < end; p++) {
-        if (!isspace((unsigned char)p[-1]) || strncmp(p, name, name_len) || p[name_len] != '=') continue;
-        char quote = p[name_len + 1];
-        if (quote != '"' && quote != '\'') return -1;
-        const char *value = p + name_len + 2;
-        size_t used = 0;
-        while (value < end && *value != quote) {
-            char decoded;
-            if (*value != '&') {
-                decoded = *value++;
-            } else if (!strncmp(value, "&amp;", 5)) {
-                decoded = '&'; value += 5;
-            } else if (!strncmp(value, "&lt;", 4)) {
-                decoded = '<'; value += 4;
-            } else if (!strncmp(value, "&gt;", 4)) {
-                decoded = '>'; value += 4;
-            } else if (!strncmp(value, "&quot;", 6)) {
-                decoded = '"'; value += 6;
-            } else if (!strncmp(value, "&apos;", 6)) {
-                decoded = '\''; value += 6;
-            } else {
-                return -1;
-            }
-            if (used + 1 >= size) return -1;
-            out[used++] = decoded;
-        }
-        if (value >= end) return -1;
-        out[used] = 0;
-        return 1;
-    }
-    return 0;
-}
-
-static bool backup_u8(const char *text, uint8_t max, uint8_t *value)
-{
-    char *end;
-    long parsed = strtol(text, &end, 10);
-    if (!text[0] || *end || parsed < 0 || parsed > max) return false;
-    *value = parsed;
-    return true;
-}
-
 static esp_err_t backup_parse_settings(const char *xml, settings_t *settings, bool *found)
 {
-    const char *element = strstr(xml, "<settings");
-    *found = element != NULL;
-    if (!element) return ESP_OK;
-    if (!isspace((unsigned char)element[9]) && element[9] != '>' && element[9] != '/') return ESP_ERR_INVALID_ARG;
-    const char *end = strchr(element, '>');
-    if (!end) return ESP_ERR_INVALID_ARG;
-
-    memset(settings, 0, sizeof(*settings));
-    char value[16];
-    if (backup_xml_attr(element, end, "version", value, sizeof(value)) != 1 || strcmp(value, "1")) {
-        return ESP_ERR_INVALID_VERSION;
+    *found = false;
+    xml_document_t document;
+    esp_err_t err = xml_read(xml, NULL, NULL, &document);
+    if (err == ESP_OK) {
+        *found = document.backup;
+        if (*found) *settings = document.settings;
     }
-#define READ_SETTING(field) \
-    do { \
-        if (backup_xml_attr(element, end, #field, settings->field, sizeof(settings->field)) != 1) \
-            return ESP_ERR_INVALID_ARG; \
-    } while (0)
-    READ_SETTING(callsign);
-    READ_SETTING(password);
-    READ_SETTING(name);
-    READ_SETTING(location);
-    READ_SETTING(dir_server);
-    READ_SETTING(wifi_ssid);
-    READ_SETTING(wifi_pass);
-#undef READ_SETTING
-
-    if (backup_xml_attr(element, end, "accept_incoming", value, sizeof(value)) != 1) return ESP_ERR_INVALID_ARG;
-    if (!strcmp(value, "true")) settings->accept_incoming = true;
-    else if (strcmp(value, "false")) return ESP_ERR_INVALID_ARG;
-
-    if (backup_xml_attr(element, end, "volume", value, sizeof(value)) != 1 ||
-        !backup_u8(value, 100, &settings->volume)) return ESP_ERR_INVALID_ARG;
-    if (backup_xml_attr(element, end, "mic_gain", value, sizeof(value)) != 1 ||
-        !backup_u8(value, 42, &settings->mic_gain)) return ESP_ERR_INVALID_ARG;
-    for (char *p = settings->callsign; *p; p++) *p = toupper((unsigned char)*p);
-    return ESP_OK;
+    return err;
 }
 
 static void restored_wifi_task(void *arg)
@@ -654,6 +575,11 @@ static esp_err_t backup_file_write(void *ctx, const char *data, size_t len)
     return fwrite(data, 1, len, ctx) == len ? ESP_OK : ESP_FAIL;
 }
 
+static esp_err_t backup_write_file(FILE *file, void *ctx)
+{
+    return backup_write(backup_file_write, file);
+}
+
 // GET /api/servers/export: all settings and the working list as one download.
 static esp_err_t h_export_download(httpd_req_t *req)
 {
@@ -670,6 +596,9 @@ static esp_err_t import_result(httpd_req_t *req, esp_err_t err, size_t count, co
         return send_error(req, "400 Bad Request", "That file has no <server> entries; nothing was changed.");
     }
     if (err == ESP_ERR_INVALID_SIZE) return send_error(req, "400 Bad Request", "That file is empty or too large.");
+    if (err == ESP_ERR_INVALID_ARG || err == ESP_ERR_INVALID_VERSION) {
+        return send_error(req, "400 Bad Request", "That file is not a valid server list; nothing was changed.");
+    }
     if (err != ESP_OK) return send_error(req, "500 Internal Server Error", "Import failed; nothing was changed.");
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "count", count);
@@ -688,7 +617,7 @@ static esp_err_t import_backup(httpd_req_t *req, char *xml, const char *what)
     if (err == ESP_ERR_INVALID_VERSION) {
         return send_error(req, "400 Bad Request", "This backup uses an unsupported settings version.");
     }
-    if (err != ESP_OK || (strstr(xml, "<echolink-backup") && !has_settings)) {
+    if (err != ESP_OK) {
         return send_error(req, "400 Bad Request", "The backup settings are incomplete or invalid; nothing was changed.");
     }
 
@@ -716,15 +645,25 @@ static esp_err_t h_import_upload(httpd_req_t *req)
     }
     char *buf = heap_caps_malloc(req->content_len + 1, MALLOC_CAP_SPIRAM);
     if (!buf) return httpd_resp_send_500(req);
+    int64_t deadline = esp_timer_get_time() + IMPORT_TIMEOUT_MS * 1000LL;
     int got = 0;
     while (got < req->content_len) {
         int n = httpd_req_recv(req, buf + got, req->content_len - got);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (n == HTTPD_SOCK_ERR_TIMEOUT || esp_timer_get_time() >= deadline) {
+            free(buf);
+            send_error(req, "408 Request Timeout", "The upload timed out; nothing was changed.");
+            // Close the session rather than reuse a connection with an unread body.
+            return ESP_FAIL;
+        }
         if (n <= 0) {
             free(buf);
             return ESP_FAIL;
         }
         got += n;
+    }
+    if (memchr(buf, 0, got)) {
+        free(buf);
+        return send_error(req, "400 Bad Request", "The backup contains invalid XML bytes.");
     }
     buf[got] = 0;
     esp_err_t err = import_backup(req, buf, "upload");
@@ -743,12 +682,8 @@ static esp_err_t sd_error(httpd_req_t *req)
 static esp_err_t h_sd_export(httpd_req_t *req)
 {
     if (sdcard_mount() != ESP_OK) return sd_error(req);
-    FILE *file = fopen(SD_BACKUP_PATH, "w");
-    if (!file) return send_error(req, "500 Internal Server Error", "Couldn't write to the SD card.");
-    esp_err_t err = backup_write(backup_file_write, file);
-    if (fclose(file) != 0) err = ESP_FAIL;
+    esp_err_t err = file_store_write(SD_BACKUP_PATH, backup_write_file, NULL);
     if (err != ESP_OK) {
-        remove(SD_BACKUP_PATH);
         return send_error(req, "500 Internal Server Error", "Couldn't write to the SD card.");
     }
     cJSON *root = cJSON_CreateObject();
@@ -760,30 +695,8 @@ static esp_err_t h_sd_export(httpd_req_t *req)
 
 static esp_err_t backup_read_file(const char *path, char **out)
 {
-    FILE *file = fopen(path, "r");
-    if (!file) return ESP_ERR_NOT_FOUND;
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    if (size <= 0 || size > IMPORT_MAX) {
-        fclose(file);
-        return ESP_ERR_INVALID_SIZE;
-    }
-    char *data = heap_caps_malloc(size + 1, MALLOC_CAP_SPIRAM);
-    if (!data) {
-        fclose(file);
-        return ESP_ERR_NO_MEM;
-    }
-    size_t got = fread(data, 1, size, file);
-    bool ok = got == (size_t)size && !ferror(file);
-    fclose(file);
-    if (!ok) {
-        free(data);
-        return ESP_FAIL;
-    }
-    data[got] = 0;
-    *out = data;
-    return ESP_OK;
+    esp_err_t err = file_store_recover(path);
+    return err == ESP_OK ? file_store_read_text(path, IMPORT_MAX, out, NULL) : err;
 }
 
 static esp_err_t h_sd_import(httpd_req_t *req)
