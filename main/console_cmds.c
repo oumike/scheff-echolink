@@ -12,6 +12,9 @@
 #include "el_qso.h"
 #include "net_wifi.h"
 #include "settings.h"
+#if CONFIG_EL_USB_AUDIO
+#include "usb_audio.h"
+#endif
 
 // Join argv[from..] with spaces.
 static void join(char *out, size_t len, int argc, char **argv, int from)
@@ -44,6 +47,10 @@ static int cmd_status(int argc, char **argv)
                st.ptt ? "TX" : st.receiving ? "RX" : "--", (unsigned long)st.rx_packets, (unsigned long)st.tx_packets);
     }
     printf("\n");
+#if CONFIG_EL_USB_AUDIO
+    printf("USB headset: mic %s, earphones %s\n", usb_audio_mic_ready() ? "in use" : "none",
+           usb_audio_speaker_ready() ? "in use" : "none");
+#endif
     return 0;
 }
 

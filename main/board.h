@@ -1,7 +1,7 @@
 #pragma once
 
-// Board support for the LilyGO T-Display-P4, LilyGO T-Deck Plus and Seeed
-// Wio Tracker L2 targets. CONFIG_EL_BOARD_* selects the board.
+// Board support for the LilyGO T-Display-P4, M5Stack Tab5, LilyGO T-Deck Plus
+// and Seeed Wio Tracker L2 targets. CONFIG_EL_BOARD_* selects the board.
 
 #include <stdbool.h>
 #include "sdkconfig.h"
@@ -35,6 +35,38 @@
 // BOOT button, active low. Shared with the Ethernet RMII TXD1, so don't use
 // it as PTT if Ethernet is ever enabled.
 #define BOARD_BOOT_BUTTON 35
+#elif CONFIG_EL_BOARD_TAB5
+// M5Stack Tab5. Pins follow M5Stack's Tab5 BSP, M5Unified, scheff-zello and
+// monster-cyberspace.
+#define BOARD_NAME           "M5Stack Tab5"
+#define BOARD_HOSTNAME       "scheff-echolink-tab5"
+#define BOARD_AP_SSID_PREFIX "Scheff-EchoLink-Tab5"
+#define BOARD_PTT_HINT       "the on-screen Talk button"
+
+// One I2C bus: PI4IOE5V6408 expanders (0x43, 0x44), INA226 battery monitor
+// (0x41), ES8388 DAC (0x10), ES7210 mic ADC (0x40), and the panel's touch
+// controller (0x55, or a GT911 at 0x14/0x5D beside the ILI9881C panel).
+#define BOARD_I2C_SDA 31
+#define BOARD_I2C_SCL 32
+
+// Touch interrupt, pulled up while the touch controller comes out of reset.
+#define BOARD_TOUCH_INT 23
+
+// LCD backlight, PWM.
+#define BOARD_LCD_BL 22
+
+// ES8388 DAC (into the NS4150B speaker amp) and ES7210 mic ADC share I2S0.
+#define BOARD_I2S_MCLK 30
+#define BOARD_I2S_BCLK 27
+#define BOARD_I2S_WS   29
+#define BOARD_I2S_DOUT 26  // P4 -> ES8388
+#define BOARD_I2S_DIN  28  // ES7210 -> P4
+#define BOARD_ES8388_ADDR 0x10
+#define BOARD_ES7210_ADDR 0x40
+
+// microSD on SDMMC slot 0, 4-bit (IO MUX pins CLK 43, CMD 44, D0-D3 39-42),
+// as on the T-Display-P4. There is no talk button: BOARD_BOOT_BUTTON stays
+// undefined and talking is on the screen (or a USB headset's mic).
 #elif CONFIG_EL_BOARD_TDECK_PLUS
 // LilyGO T-Deck Plus. The Plus uses the original T-Deck peripheral map.
 #define BOARD_NAME           "LilyGO T-Deck Plus"
@@ -117,23 +149,31 @@
 
 esp_err_t board_init(void);
 
-// Shared OUT_5V audio domain: NS4150B speaker amp and the ES8311 analog supply.
+// Speaker power: on the T-Display-P4 the shared OUT_5V audio domain (NS4150B
+// speaker amp and the ES8311 analog supply), on the Tab5 the NS4150B amp.
 esp_err_t board_audio_power(bool on);
 
-// ESP32-C6 coprocessor EN line (active high).
+// ESP32-C6 coprocessor: the EN line (active high) on the T-Display-P4, its
+// power switch on the Tab5.
 esp_err_t board_c6_enable(bool on);
 
-// microSD card supply (XL9535 IO15, active low).
+// microSD card supply (XL9535 IO15, active low). A no-op on the Tab5, whose
+// slot is always powered.
 esp_err_t board_sd_power(bool on);
+
+// 5 V to the Tab5's USB-A host port.
+esp_err_t board_usb_host_power(bool on);
 
 // RM69A10 AMOLED and GT9895 touch reset lines (XL9535). false holds the part
 // in reset, true releases it.
 esp_err_t board_screen_reset_release(bool released);
 esp_err_t board_touch_reset_release(bool released);
 
-// Reads the BQ27220 state of charge (0-100%).
+// Reads the state of charge (0-100%): the BQ27220 gauge on the T-Display-P4,
+// an estimate from the pack voltage on the Tab5.
 esp_err_t board_battery_percent(uint8_t *percent);
 
-// I2C bus 1 (expander, touch) and bus 2 (codec).
+// I2C bus 1 (expander, touch) and bus 2 (codec). The Tab5 returns its one
+// shared bus for both.
 i2c_master_bus_handle_t board_main_i2c_bus(void);
 i2c_master_bus_handle_t board_codec_i2c_bus(void);

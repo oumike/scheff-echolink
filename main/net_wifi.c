@@ -51,7 +51,7 @@ static bool reason_is_not_found(uint8_t r)
            r == WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD || r == WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD;
 }
 
-#if CONFIG_IDF_TARGET_ESP32P4
+#if CONFIG_IDF_TARGET_ESP32P4 && !CONFIG_EL_BOARD_TAB5
 static esp_err_t c6_reset_cb(void *arg, bool level)
 {
     return board_c6_enable(level);
@@ -92,7 +92,14 @@ esp_err_t net_wifi_init(void)
     s_events = xEventGroupCreate();
     s_join_lock = xSemaphoreCreateMutex();
 
-#if CONFIG_IDF_TARGET_ESP32P4
+#if CONFIG_EL_BOARD_TAB5
+    // The C6 off and on through the expander, so it starts fresh with the
+    // host, as M5Unified does; ESP-Hosted then resets it on GPIO15 itself.
+    ESP_RETURN_ON_ERROR(board_c6_enable(false), TAG, "c6 power");
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_RETURN_ON_ERROR(board_c6_enable(true), TAG, "c6 power");
+    ESP_RETURN_ON_ERROR(esp_hosted_init(), TAG, "esp_hosted_init");
+#elif CONFIG_IDF_TARGET_ESP32P4
     // The P4 reaches Wi-Fi through the C6 coprocessor over ESP-Hosted.
     ESP_RETURN_ON_FALSE(esp_hosted_sdio_set_reset_callback(c6_reset_cb, NULL) == ESP_TRANSPORT_OK,
                         ESP_FAIL, TAG, "hosted reset cb");

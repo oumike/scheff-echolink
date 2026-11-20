@@ -7,7 +7,10 @@ STORAGE = r"""
 typedef struct { bool format_if_mount_failed; int max_files; int allocation_unit_size; } esp_vfs_fat_mount_config_t;
 typedef int wl_handle_t;
 #define CONFIG_WL_SECTOR_SIZE 512
-static int esp_vfs_fat_spiflash_mount_rw_wl(const char *p, const char *l, const void *c, void *w) { return ESP_OK; }
+static esp_err_t flash_mount_result = ESP_OK, sd_mount_result = ESP_OK;
+static int esp_vfs_fat_spiflash_mount_rw_wl(const char *p, const char *l, const void *c, void *w) { return flash_mount_result; }
+#define SDCARD_MOUNT "."
+static esp_err_t sdcard_mount(void) { return sd_mount_result; }
 #undef SERVER_LIST_PATH
 #undef SERVER_LIST_DEFAULT_PATH
 #define SERVER_LIST_PATH "servers.xml"
@@ -105,6 +108,25 @@ def storage_program():
 class StorageTests(unittest.TestCase):
     def run_storage(self, body):
         run_c(storage_program() + body, extra=["-lexpat"])
+
+    def test_without_flash_storage_or_sd_list_is_kept_in_ram(self):
+        self.run_storage(r"""
+int main(void) {
+    flash_mount_result = ESP_ERR_NOT_FOUND;
+    sd_mount_result = ESP_FAIL;
+    assert(server_list_init() == ESP_OK);
+    el_station_t st = {0};
+    strcpy(st.call, "KEEP-R");
+    st.node = 10;
+    server_list_on_directory(&st, 1);
+    assert(server_list_count() == 1);
+    struct stat sb;
+    assert(stat(SERVER_LIST_PATH, &sb) != 0 && stat(SERVER_LIST_DEFAULT_PATH, &sb) != 0);
+    server_list_on_directory(&st, 1);
+    assert(server_list_count() == 1);
+    free(s_list);
+}
+""")
 
     def test_headerless_legacy_xml_is_safe_and_preserves_attributes(self):
         self.run_storage(r"""
@@ -304,7 +326,6 @@ typedef void httpd_req_t;
 typedef void cJSON;
 #define SD_BACKUP_PATH "backup.xml"
 #define BACKUP_FILE_NAME "backup.xml"
-static esp_err_t sdcard_mount(void) { return ESP_OK; }
 static esp_err_t sd_error(httpd_req_t *r) { return ESP_FAIL; }
 static esp_err_t send_error(httpd_req_t *r, const char *status, const char *msg) { return ESP_FAIL; }
 static esp_err_t send_json(httpd_req_t *r, cJSON *j) { return ESP_OK; }

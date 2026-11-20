@@ -38,11 +38,17 @@
 #define UI_BTN_H            96
 #define UI_FIELD_H          72
 #define UI_RADIUS           14
+#if CONFIG_EL_BOARD_TAB5
+// The Tab5's LCD has square corners: only a small margin.
+#define UI_SAFE_TOP    16
+#define UI_SAFE_BOTTOM 16
+#else
 // The AMOLED's corners are curved: keep content this far from the top and
 // bottom edges. Every screen and full-screen form gets it from
 // ui_layout_create(); anything placed outside that layout must add it itself.
 #define UI_SAFE_TOP    72
 #define UI_SAFE_BOTTOM 32
+#endif
 
 #define UI_FONT_SMALL (&lv_font_montserrat_20)
 #define UI_FONT       (&lv_font_montserrat_28)

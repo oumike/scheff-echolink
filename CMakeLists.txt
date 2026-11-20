@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-set(PROJECT_VER "0.1.0")
+# Releases stamp VERSION (see .github/workflows/release.yml).
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)
 
 project(scheff-echolink)

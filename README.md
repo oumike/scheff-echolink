@@ -1,12 +1,13 @@
 # scheff-echolink
 
-An EchoLink client for the **LilyGO T-Display-P4** (ESP32-P4), **LilyGO
-T-Deck Plus** (ESP32-S3) and **Seeed Wio Tracker L2** (ESP32-S3). It uses
+An EchoLink client for the **LilyGO T-Display-P4** (ESP32-P4), **M5Stack
+Tab5** (ESP32-P4), **LilyGO T-Deck Plus** (ESP32-S3) and **Seeed Wio Tracker
+L2** (ESP32-S3). It uses
 each board's onboard display, microphone, speaker and Wi-Fi hardware so you
 can connect to EchoLink stations, links, repeaters and conferences without a
 PC.
 
-**Status: early and not yet tested on hardware.** All three targets compile
+**Status: early and not yet tested on hardware.** All four targets compile
 with PlatformIO's ESP-IDF v5.5, but none has been verified on a device yet.
 The protocol pieces were checked on the host (see
 [Verification](#verification)).
@@ -23,8 +24,9 @@ The protocol pieces were checked on the host (see
 - Full audio path at 8 kHz mono: mic → GSM encode → UDP, and UDP → GSM
   decode → 240 ms jitter buffer → speaker.
 - Half-duplex PTT: hold **BOOT** on T-Display-P4, hold **Space** on T-Deck
-  Plus, hold the **user button** on Wio Tracker L2, or use the `ptt` console
-  command.
+  Plus, hold the **user button** on Wio Tracker L2, hold the on-screen talk
+  button (the only option on the Tab5), or use the `ptt` console command.
+- USB headset on the Tab5's USB-A port (see below).
 - Serial console for setup and operation. Settings are saved in NVS.
 - Mic → speaker loopback mode for testing the audio hardware.
 
@@ -82,6 +84,40 @@ GNSS module aren't used: the radio's CS (GPIO21) is held high and GNSS power
 stays off. Display colours, touch mapping and the microphone path haven't been
 checked on a device yet.
 
+## Hardware notes (Tab5)
+
+| Function | Details |
+| --- | --- |
+| Display | 5" 720x1280 MIPI-DSI LCD, 2 lanes: ST7123, ST7121 or ILI9881C, identified at boot by the touch controller beside it (ST7123/ST7121 touch at 0x55, or GT911). Backlight PWM on GPIO22 |
+| I/O expanders | PI4IOE5V6408 at 0x43 and 0x44 on I2C SDA 31 / SCL 32. They switch the speaker amp, LCD/touch reset, the C6's power and the USB-A port's 5 V |
+| Audio | ES8388 DAC at 0x10 and ES7210 microphone ADC at 0x40 on one I2S port: MCLK 30, BCLK 27, WS 29, DOUT 26, DIN 28 |
+| Wi-Fi | ESP32-C6 over ESP-Hosted SDIO (CLK 12, CMD 13, D0–D3 11/10/9/8, reset 15) |
+| PTT | No button: hold the on-screen talk button in Chat, or use `ptt` |
+| Storage | microSD on SDMMC slot 0, 4-bit, as on the T-Display-P4 |
+| Battery | INA226 at 0x41 (2S pack) |
+| USB headset | USB-A host port (see below) |
+
+Pins and init sequences come from M5Stack's Tab5 BSP, M5Unified/M5GFX,
+scheff-zello and monster-cyberspace. The panel, audio and Wi-Fi bring-up
+haven't been checked on a device with this firmware yet.
+
+### USB headset (Tab5)
+
+Plug a USB headset or USB sound card (UAC 1.0, e.g. a C-Media adapter) into
+the Tab5's USB-A port. While it's plugged in its microphone feeds transmit
+and its earphones get receive audio; the built-in mic and speaker take over
+again when it's unplugged. Hot-plugging works. `status` on the console shows
+whether a headset is in use, and `set volume` sets the headset's volume too.
+
+- The device needs a 16-bit PCM format at 8, 16, 24, 32 or 48 kHz, mono or
+  stereo; it is converted to EchoLink's 8 kHz mono. Adapters that only offer
+  44.1 kHz aren't supported.
+- Many adapters mix the microphone into the earphones in hardware (sidetone);
+  the firmware mutes that path when it finds a control for it.
+- `mic_gain` only affects the built-in microphones, and headset buttons
+  aren't used for PTT.
+- Turn it off with `CONFIG_EL_USB_AUDIO` (menuconfig: EchoLink Client).
+
 ## Build
 
 ```bash
@@ -97,6 +133,7 @@ manages ESP-IDF itself, so you don't need a separate install:
 
 ```bash
 scripts/build-upload-monitor.sh                 # build + flash + monitor
+scripts/build-upload-monitor.sh --tab5          # select M5Stack Tab5
 scripts/build-upload-monitor.sh --tdeck-plus    # select T-Deck Plus
 scripts/build-upload-monitor.sh --wio-tracker-l2  # select Wio Tracker L2
 scripts/build-upload-monitor.sh --tdisplay-p4   # explicitly select T-Display-P4
@@ -115,7 +152,35 @@ Notes:
   `~/.platformio-p4/build/scheff-echolink`; `ECHOLINK_BUILD_DIR` overrides it.
   If the core directory points to a volume with spaces, use a real space-free
   core/package installation, not just a symlink to the framework.
-- `sdkconfig.pio.defaults` selects the board's ECO2 (pre-v3) P4 silicon.
+- `sdkconfig.pio.defaults` selects the ECO2 (pre-v3) P4 silicon both P4
+  boards carry; `sdkconfig.pio.tab5.defaults` adds the Tab5's board and
+  ESP-Hosted pins.
+
+### Releases and bmorcelli's Launcher
+
+Actions → **Release** → Run workflow builds every board, tags `vX.Y.Z` (from
+`VERSION`) and publishes two images per board:
+
+| Asset | Use |
+| --- | --- |
+| `scheff-echolink-<board>-vX.Y.Z.bin` | Full image for `esptool.py write_flash 0x0` |
+| `scheff-echolink-<board>-vX.Y.Z-app.bin` | App only (`0x10000`), for [bmorcelli's Launcher](https://github.com/bmorcelli/Launcher) |
+
+Launcher lists firmware per board from LauncherHub. Every board here has a
+Launcher build:
+
+| Board | Launcher category |
+| --- | --- |
+| `tdisplay-p4` | `t-display-p4` |
+| `tab5` | `tab5` |
+| `tdeck-plus` | `t-deck` |
+| `wio-tracker-l2` | `seeedstudio_wio_tracker_l2` |
+
+Under Launcher the device runs Launcher's partition table, which has no
+`storage` partition. The server lists then live on the microSD card in
+`/sdcard/echolink/`; without a card they are rebuilt from the directory after
+each boot, and edits and favorites aren't kept. Settings stay in NVS, which
+Launcher shares.
 
 On an aarch64 Linux host, Espressif doesn't ship a ninja binary. Run
 `pip install ninja` inside the IDF Python env.
@@ -126,7 +191,7 @@ If boot fails with a chip-revision error, your P4 is older than v3.x. Enable
 ## Touch UI
 
 The LVGL 9 UI uses the T-Display-P4's 568x1232 RM69A10/GT9895 display, the
-T-Deck Plus's 320x240 ST7789/GT911 display, or the Wio Tracker L2's 320x240
+Tab5's 720x1280 LCD, the T-Deck Plus's 320x240 ST7789/GT911 display, or the Wio Tracker L2's 320x240
 NV3031B/GT911 display. The two 320x240 targets use compact fonts and
 controls, and scroll workflows that do not fit in one viewport.
 
@@ -155,7 +220,7 @@ controls, and scroll workflows that do not fit in one viewport.
     number, a description, and optionally a host or IP address to connect to
     directly.
 - **PTT:** hold the P4's **BOOT** button, the T-Deck Plus **Space** bar or
-  the Wio Tracker L2 **user button** anywhere. In Chat it lights the talk
+  the Wio Tracker L2 **user button** anywhere (the Tab5 has no button). In Chat it lights the talk
   button like the on-screen one does.
 - **Chat** opens once connected:
   - Incoming and console-initiated calls also open Chat from Home. Active
@@ -170,8 +235,8 @@ controls, and scroll workflows that do not fit in one viewport.
 You can do the same onboarding from a phone or computer.
 
 - **Until Wi-Fi connects**, the device runs an open setup hotspot (no password)
-  named `Scheff-EchoLink-P4-XXXX`, `Scheff-EchoLink-TDeck-XXXX` or
-  `Scheff-EchoLink-WioL2-XXXX`. Join it and phones open the setup page by
+  named `Scheff-EchoLink-P4-XXXX`, `Scheff-EchoLink-Tab5-XXXX`,
+  `Scheff-EchoLink-TDeck-XXXX` or `Scheff-EchoLink-WioL2-XXXX`. Join it and phones open the setup page by
   themselves; otherwise browse to `http://192.168.4.1`. Because it's open,
   the Wi-Fi and EchoLink passwords you enter there cross the air
   unencrypted.
@@ -215,7 +280,8 @@ login, so anyone on your network can reach it.
 ### Server lists
 
 Known nodes (conferences, links and repeaters) are stored as XML on a 4 MB
-FAT partition in internal flash, mounted at `/data`:
+FAT partition in internal flash, mounted at `/data` (on the microSD card under
+Launcher; see [Releases](#releases-and-bmorcellis-launcher)):
 
 | File | Purpose |
 | --- | --- |
@@ -252,8 +318,9 @@ that IP.
 ```
 echolink> list ECHOTEST            # search the directory
 echolink> connect *ECHOTEST*       # or: c 9999, or: c 1.2.3.4
-  (hold BOOT on T-Display-P4, Space on T-Deck Plus or the user button on
-   Wio Tracker L2 to talk; ECHOTEST plays it back)
+  (hold BOOT on T-Display-P4, Space on T-Deck Plus, the user button on
+   Wio Tracker L2 or the on-screen button on Tab5 to talk; ECHOTEST plays
+   it back)
 echolink> chat hello               # text chat
 echolink> dc                       # disconnect
 echolink> set volume 60
@@ -300,6 +367,8 @@ main/
   sdcard.*         microSD (SDMMC slot 0, 4-bit) at /sdcard
   *_tdeck.c        T-Deck Plus board, display, audio, keyboard PTT and SD
   *_wio_l2.c       Wio Tracker L2 board, display, audio and SD
+  *_tab5.c         Tab5 board, display and audio (panel_tab5_init.h: panel init lists)
+  usb_audio.*      USB headset (UAC host) on the Tab5's USB-A port
 components/gsm     libgsm 1.0.22 (TU Berlin), unmodified, see COPYRIGHT
 third_party/esp_hosted  LilyGO ESP-Hosted fork (submodule)
 ```
