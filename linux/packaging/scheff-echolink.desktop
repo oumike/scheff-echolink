@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Desktop Entry]
+Name=Scheff EchoLink
+Exec=/usr/share/APPLaunch/bin/scheff-echolink
+Terminal=false
+Icon=share/images/scheff-echolink.png
+Type=Application

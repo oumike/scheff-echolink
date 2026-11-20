@@ -1,0 +1,120 @@
+name: Build
+
+# Builds every board from a clean checkout. Publishes nothing; release.yml
+# calls this with the version it is cutting.
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to stamp into VERSION before building'
+        type: string
+        default: ''
+
+concurrency:
+  group: build-${{ github.ref }}-${{ inputs.version || 'ci' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install expat
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libexpat1-dev
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+  firmware:
+    name: Firmware (${{ matrix.env }})
+    needs: host-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [ tdisplay-p4, tab5, tdeck-plus, wio-tracker-l2 ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Only toolchains and frameworks are cached, never build output.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio-p4
+          key: pio-${{ runner.os }}-${{ matrix.env }}-${{ hashFiles('platformio.ini', 'main/idf_component.yml') }}
+          restore-keys: pio-${{ runner.os }}-${{ matrix.env }}-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Set version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: printf '%s\n' "$VERSION" > VERSION
+
+      - name: Build
+        env:
+          ECHOLINK_BUILD_DIR: ${{ github.workspace }}/.pio/ci
+        run: ./scripts/build-upload-monitor.sh --${{ matrix.env }} --just-build
+
+      - name: Package
+        run: python3 scripts/package-firmware.py ${{ matrix.env }} .pio/ci/${{ matrix.env }} dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: dist/*.bin
+          if-no-files-found: error
+          retention-days: 14
+
+  cardputer-zero:
+    name: Firmware (cardputer-zero)
+    needs: host-tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: printf '%s\n' "$VERSION" > VERSION
+
+      # Same Debian trixie arm64 container as a local build.
+      - name: Build and package
+        run: ./scripts/build-cardputer-zero.sh --deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-cardputer-zero
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 14

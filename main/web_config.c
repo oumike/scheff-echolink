@@ -794,6 +794,6 @@ esp_err_t web_config_start(void)
         xTaskCreate(dns_task, "web_dns", 3072, NULL, 4, NULL);
         onboard_changed();
     }
-    ESP_LOGI(TAG, "web config on port 80%s", net_wifi_ap_active() ? " (setup hotspot up)" : "");
+    ESP_LOGI(TAG, "web config on port %u%s", (unsigned)cfg.server_port, net_wifi_ap_active() ? " (setup hotspot up)" : "");
     return ESP_OK;
 }

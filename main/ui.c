@@ -119,7 +119,9 @@ static void field_event(lv_event_t *e)
     lv_obj_t *kb = lv_event_get_user_data(e);
     if (lv_event_get_code(e) == LV_EVENT_FOCUSED) {
         lv_keyboard_set_textarea(kb, ta);
+#if !UI_HW_KEYBOARD
         lv_obj_remove_flag(kb, LV_OBJ_FLAG_HIDDEN);
+#endif
         // Once the keyboard has taken its space, bring the field into view.
         lv_obj_update_layout(lv_obj_get_screen(ta));
         lv_obj_scroll_to_view_recursive(ta, LV_ANIM_ON);
@@ -217,6 +219,15 @@ lv_obj_t *ui_button(lv_obj_t *parent, const char *text, lv_color_t color, lv_eve
     return b;
 }
 
+void ui_textarea_compact(lv_obj_t *ta)
+{
+#if UI_HW_KEYBOARD
+    // The theme's padding leaves no room for a line in a short field.
+    lv_obj_set_style_pad_ver(ta, (UI_FIELD_H - lv_font_get_line_height(UI_FONT)) / 2 - 2, 0);
+    lv_obj_set_style_pad_hor(ta, UI_PAD + 2, 0);
+#endif
+}
+
 lv_obj_t *ui_field(lv_obj_t *parent, const char *label, const char *placeholder, lv_obj_t *kb)
 {
     ui_label(parent, label, UI_FONT_SMALL, UI_COLOR_MUTED);
@@ -226,6 +237,7 @@ lv_obj_t *ui_field(lv_obj_t *parent, const char *label, const char *placeholder,
     lv_obj_set_size(ta, LV_PCT(100), UI_FIELD_H);
     lv_obj_set_style_text_font(ta, UI_FONT, 0);
     lv_obj_set_style_radius(ta, UI_RADIUS, 0);
+    ui_textarea_compact(ta);
     if (kb) ui_field_attach_keyboard(ta, kb);
     return ta;
 }
@@ -270,7 +282,12 @@ static lv_obj_t *modal_box(void)
     lv_obj_set_style_pad_row(box, UI_GAP * 2, 0);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+#if UI_COMPACT && UI_HW_KEYBOARD
+    // Too short for a tall menu: scroll, and let the focus bring buttons in.
+    lv_obj_set_style_max_height(box, DISPLAY_V_RES - 2 * UI_PAD, 0);
+#else
     lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+#endif
     return box;
 }
 
@@ -399,7 +416,11 @@ void ui_web_hint_update(lv_obj_t *label)
                               "then open http://192.168.4.1",
                               net_wifi_ap_ssid());
     } else if (sta) {
+#if CONFIG_EL_LINUX
+        lv_label_set_text_fmt(label, LV_SYMBOL_SETTINGS " Web config: http://%s:%d", ip, CONFIG_EL_WEB_PORT);
+#else
         lv_label_set_text_fmt(label, LV_SYMBOL_SETTINGS " Web config: http://%s", ip);
+#endif
     } else {
         lv_label_set_text(label, "");
     }

@@ -18,6 +18,7 @@
 #include "lwip/sockets.h"
 #include "wear_levelling.h"
 #include "file_store.h"
+#include "sdcard.h"
 #include "xml.h"
 
 static const char *TAG = "servers";
@@ -30,6 +31,15 @@ static SemaphoreHandle_t s_lock;
 static server_entry_t *s_list;
 static size_t s_count, s_cap;
 static bool s_mounted;
+// Where the two files live: the "storage" partition, or the SD card when the
+// partition table has none (installed by bmorcelli's Launcher, whose table we
+// run under). With neither, the list is kept in RAM only.
+static const char *s_path = SERVER_LIST_PATH;
+static const char *s_default_path = SERVER_LIST_DEFAULT_PATH;
+
+#define SD_DIR          SDCARD_MOUNT "/echolink"
+#define SD_PATH         SD_DIR "/echolink-servers.xml"
+#define SD_DEFAULT_PATH SD_DIR "/echolink-default-servers.xml"
 static void (*s_changed_cb)(void);
 
 static const char *const TYPE_NAMES[] = {"conference", "link", "repeater", "other"};
@@ -274,6 +284,7 @@ static esp_err_t save_list(const char *path, const server_entry_t *entries, size
 
 static esp_err_t save_file(const char *path)
 {
+    if (!s_mounted) return ESP_ERR_INVALID_STATE;
     return save_list(path, s_list, s_count);
 }
 
@@ -289,22 +300,31 @@ esp_err_t server_list_init(void)
         .allocation_unit_size = CONFIG_WL_SECTOR_SIZE,
     };
     wl_handle_t wl;
-    ESP_RETURN_ON_ERROR(esp_vfs_fat_spiflash_mount_rw_wl(MOUNT_POINT, PARTITION, &mcfg, &wl), TAG,
-                        "mount " MOUNT_POINT);
+    esp_err_t mount_err = esp_vfs_fat_spiflash_mount_rw_wl(MOUNT_POINT, PARTITION, &mcfg, &wl);
+    if (mount_err != ESP_OK) {
+        ESP_LOGW(TAG, "no \"" PARTITION "\" partition (%s); trying the SD card", esp_err_to_name(mount_err));
+        if (sdcard_mount() != ESP_OK) {
+            ESP_LOGW(TAG, "no SD card either: the server list lives in RAM until reboot");
+            return ESP_OK;
+        }
+        mkdir(SD_DIR, 0775);
+        s_path = SD_PATH;
+        s_default_path = SD_DEFAULT_PATH;
+    }
     s_mounted = true;
 
-    esp_err_t default_recovery = file_store_recover(SERVER_LIST_DEFAULT_PATH);
-    esp_err_t working_recovery = file_store_recover(SERVER_LIST_PATH);
+    esp_err_t default_recovery = file_store_recover(s_default_path);
+    esp_err_t working_recovery = file_store_recover(s_path);
     if (default_recovery != ESP_OK || working_recovery != ESP_OK) {
         ESP_LOGE(TAG, "server list recovery failed");
     }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    esp_err_t err = load_file(SERVER_LIST_PATH);
-    if (err == ESP_ERR_NOT_FOUND && load_file(SERVER_LIST_DEFAULT_PATH) == ESP_OK) {
-        save_file(SERVER_LIST_PATH);
+    esp_err_t err = load_file(s_path);
+    if (err == ESP_ERR_NOT_FOUND && load_file(s_default_path) == ESP_OK) {
+        save_file(s_path);
     } else if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
-        ESP_LOGE(TAG, "%s unreadable: %s", SERVER_LIST_PATH, esp_err_to_name(err));
+        ESP_LOGE(TAG, "%s unreadable: %s", s_path, esp_err_to_name(err));
     }
     xSemaphoreGive(s_lock);
 
@@ -314,7 +334,7 @@ esp_err_t server_list_init(void)
 
 void server_list_on_directory(const el_station_t *stations, size_t count)
 {
-    if (!s_mounted || file_exists(SERVER_LIST_DEFAULT_PATH)) return;
+    if (s_mounted && file_exists(s_default_path)) return;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     // Keep any manual entries made before the first download.
@@ -357,12 +377,12 @@ void server_list_on_directory(const el_station_t *stations, size_t count)
         }
         s_list = snap;
         s_count = n;
-        save_file(SERVER_LIST_DEFAULT_PATH);
+        save_file(s_default_path);
         s_list = all;
         s_count = all_count;
         free(snap);
     }
-    save_file(SERVER_LIST_PATH);
+    save_file(s_path);
     xSemaphoreGive(s_lock);
     notify_changed();
 }
@@ -450,7 +470,7 @@ esp_err_t server_list_put(const char *orig_call, const server_entry_t *entry)
         slot->manual = is_new || was_manual || entry->manual;
         if (slot->type == SERVER_OTHER) slot->type = type_from_call(slot->call);
         qsort(s_list, s_count, sizeof(*s_list), entry_cmp);
-        err = save_file(SERVER_LIST_PATH);
+        err = save_file(s_path);
     }
     xSemaphoreGive(s_lock);
     if (err == ESP_OK) notify_changed();
@@ -465,7 +485,7 @@ esp_err_t server_list_set_favorite(const char *call, bool favorite)
     esp_err_t err = ESP_ERR_NOT_FOUND;
     if (e) {
         e->favorite = favorite;
-        err = save_file(SERVER_LIST_PATH);
+        err = save_file(s_path);
     }
     xSemaphoreGive(s_lock);
     if (err == ESP_OK) notify_changed();
@@ -481,7 +501,7 @@ esp_err_t server_list_delete(const char *call)
     if (e) {
         memmove(e, e + 1, (s_list + s_count - (e + 1)) * sizeof(*e));
         s_count--;
-        err = save_file(SERVER_LIST_PATH);
+        err = save_file(s_path);
     }
     xSemaphoreGive(s_lock);
     if (err == ESP_OK) notify_changed();
@@ -502,7 +522,7 @@ esp_err_t server_list_import_buffer(const char *xml, size_t *count)
         return err;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    err = save_list(SERVER_LIST_PATH, vec.v, vec.n);
+    err = save_list(s_path, vec.v, vec.n);
     if (err == ESP_OK) {
         free(s_list);
         s_list = vec.v;

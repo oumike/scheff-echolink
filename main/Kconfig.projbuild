@@ -12,6 +12,10 @@ menu "EchoLink Client"
             bool "LilyGO T-Display-P4"
             depends on IDF_TARGET_ESP32P4
 
+        config EL_BOARD_TAB5
+            bool "M5Stack Tab5"
+            depends on IDF_TARGET_ESP32P4
+
         config EL_BOARD_TDECK_PLUS
             bool "LilyGO T-Deck Plus"
             depends on IDF_TARGET_ESP32S3
@@ -20,6 +24,16 @@ menu "EchoLink Client"
             bool "Seeed Wio Tracker L2"
             depends on IDF_TARGET_ESP32S3
     endchoice
+
+    config EL_USB_AUDIO
+        bool "USB audio headset on the USB-A host port"
+        depends on EL_BOARD_TAB5
+        default y
+        help
+            Drives a USB audio class (UAC 1.0) headset or sound card plugged
+            into the Tab5's USB-A port. While plugged in, its microphone
+            replaces the built-in ones and its output replaces the speaker;
+            each direction falls back on its own when the device is removed.
 
     config EL_CALLSIGN
         string "Default callsign"
@@ -40,6 +54,7 @@ menu "EchoLink Client"
         string "Default location/description"
         default "Wio Tracker L2" if EL_BOARD_WIO_TRACKER_L2
         default "T-Deck Plus" if EL_BOARD_TDECK_PLUS
+        default "Tab5" if EL_BOARD_TAB5
         default "T-Display-P4"
         help
             Shown in the EchoLink directory next to your callsign.

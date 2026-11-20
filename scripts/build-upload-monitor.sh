@@ -19,8 +19,9 @@ FULLCLEAN=false
 JUST_BUILD=false
 
 show_usage() {
-	echo "Usage: $0 [--tdisplay-p4|--tdeck-plus|--wio-tracker-l2] [--port PORT] [--erase|-E] [--fullclean|-F] [--just-build|-B]"
+	echo "Usage: $0 [--tdisplay-p4|--tab5|--tdeck-plus|--wio-tracker-l2] [--port PORT] [--erase|-E] [--fullclean|-F] [--just-build|-B]"
 	echo "  --tdisplay-p4  Build the LilyGO T-Display-P4 target (default)."
+	echo "  --tab5         Build the M5Stack Tab5 target."
 	echo "  --tdeck-plus   Build the LilyGO T-Deck Plus target."
 	echo "  --wio-tracker-l2  Build the Seeed Wio Tracker L2 target."
 	echo "  --port PORT   Serial port of the selected device (e.g. /dev/cu.usbmodem1101)."
@@ -72,6 +73,9 @@ while [ $# -gt 0 ]; do
 		--tdisplay-p4)
 			ENV_NAME="tdisplay-p4"
 			;;
+		--tab5)
+			ENV_NAME="tab5"
+			;;
 		--tdeck-plus)
 			ENV_NAME="tdeck-plus"
 			;;
@@ -115,7 +119,7 @@ fi
 
 # The ESP-Hosted fork is a submodule; a non-recursive clone leaves it empty and
 # the build then fails with a confusing missing-component error.
-if [ "$ENV_NAME" = "tdisplay-p4" ] && [ -z "$(ls -A third_party/esp_hosted 2>/dev/null)" ]; then
+if { [ "$ENV_NAME" = "tdisplay-p4" ] || [ "$ENV_NAME" = "tab5" ]; } && [ -z "$(ls -A third_party/esp_hosted 2>/dev/null)" ]; then
 	echo "[GIT] Initialising submodules..."
 	git submodule update --init --recursive
 fi

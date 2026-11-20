@@ -12,6 +12,9 @@
 #include "el_qso.h"
 #include "net_wifi.h"
 #include "settings.h"
+#if CONFIG_EL_USB_AUDIO
+#include "usb_audio.h"
+#endif
 
 // Join argv[from..] with spaces.
 static void join(char *out, size_t len, int argc, char **argv, int from)
@@ -44,6 +47,10 @@ static int cmd_status(int argc, char **argv)
                st.ptt ? "TX" : st.receiving ? "RX" : "--", (unsigned long)st.rx_packets, (unsigned long)st.tx_packets);
     }
     printf("\n");
+#if CONFIG_EL_USB_AUDIO
+    printf("USB headset: mic %s, earphones %s\n", usb_audio_mic_ready() ? "in use" : "none",
+           usb_audio_speaker_ready() ? "in use" : "none");
+#endif
     return 0;
 }
 
@@ -170,6 +177,9 @@ void console_start(void)
 #elif CONFIG_ESP_CONSOLE_USB_CDC
     esp_console_dev_usb_cdc_config_t hw = ESP_CONSOLE_DEV_CDC_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_cdc(&hw, &rc, &repl));
+#elif CONFIG_EL_LINUX
+    // stdin when run from a terminal; nothing under the launcher.
+    ESP_ERROR_CHECK(esp_console_new_repl_stdio(&rc, &repl));
 #elif CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     esp_console_dev_usb_serial_jtag_config_t hw = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw, &rc, &repl));

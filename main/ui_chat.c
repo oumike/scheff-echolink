@@ -17,6 +17,17 @@
 #include "settings.h"
 #include "ui_internal.h"
 
+#if UI_HW_KEYBOARD
+// The CardputerZero's talk button is one line high.
+#define TALK_LABEL LV_SYMBOL_AUDIO "  HOLD SPACE TO TALK"
+#define TX_LABEL LV_SYMBOL_AUDIO "  TRANSMITTING"
+#define BUSY_LABEL LV_SYMBOL_VOLUME_MAX "  BUSY"
+#else
+#define TALK_LABEL LV_SYMBOL_AUDIO "  HOLD TO TALK"
+#define TX_LABEL LV_SYMBOL_AUDIO "  TRANSMITTING\nrelease to listen"
+#define BUSY_LABEL LV_SYMBOL_VOLUME_MAX "  BUSY\nsomeone else is talking"
+#endif
+
 #define CONNECT_TIMEOUT_MS 45000
 
 static server_entry_t s_target;
@@ -241,11 +252,11 @@ void ui_chat_update(void)
     }
 
     if (st.ptt) {
-        set_talk(UI_COLOR_GO_LIT, LV_SYMBOL_AUDIO "  TRANSMITTING\nrelease to listen");
+        set_talk(UI_COLOR_GO_LIT, TX_LABEL);
     } else if (st.receiving) {
-        set_talk(UI_COLOR_STOP, LV_SYMBOL_VOLUME_MAX "  BUSY\nsomeone else is talking");
+        set_talk(UI_COLOR_STOP, BUSY_LABEL);
     } else {
-        set_talk(UI_COLOR_GO, LV_SYMBOL_AUDIO "  HOLD TO TALK");
+        set_talk(UI_COLOR_GO, TALK_LABEL);
     }
 
     update_identity(&st);
@@ -279,7 +290,7 @@ static void chat_show(void)
     lv_obj_t *box = lv_obj_create(col);
     lv_obj_set_width(box, LV_PCT(100));
 #if UI_COMPACT
-    lv_obj_set_height(box, 48);
+    lv_obj_set_height(box, UI_COMPACT_INFO_H);
 #else
     lv_obj_set_flex_grow(box, 1);
 #endif
@@ -323,7 +334,7 @@ static void chat_show(void)
     lv_obj_set_style_text_font(s_talk_label, UI_FONT_TITLE, 0);
     lv_obj_set_style_text_align(s_talk_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(s_talk_label);
-    set_talk(UI_COLOR_GO, LV_SYMBOL_AUDIO "  HOLD TO TALK");
+    set_talk(UI_COLOR_GO, TALK_LABEL);
 
     ui_button(col, LV_SYMBOL_CLOSE "  Leave", UI_COLOR_PANEL, leave_clicked, NULL);
 

@@ -445,8 +445,11 @@ void ui_home_show(void)
         lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
     #endif
 
-        // Callsign header with account and Wi-Fi settings underneath.
+        // Callsign header with account and Wi-Fi settings underneath (beside
+        // it on the short CardputerZero screen).
+    #if !UI_HW_KEYBOARD
         s_callsign = ui_title(col, "");
+    #endif
         lv_obj_t *actions = lv_obj_create(col);
         lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
@@ -455,6 +458,12 @@ void ui_home_show(void)
         lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(actions, 0, 0);
         lv_obj_remove_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    #if UI_HW_KEYBOARD
+        lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_right(actions, UI_STATUS_BAR_W - UI_PAD, 0);
+        s_callsign = ui_title(actions, "");
+        lv_obj_set_flex_grow(s_callsign, 1);
+    #endif
         lv_obj_t *edit = ui_button(actions, LV_SYMBOL_EDIT "  Edit", UI_COLOR_PANEL, edit_account_clicked, NULL);
         lv_obj_set_size(edit, LV_SIZE_CONTENT, UI_EDIT_BUTTON_H);
         lv_obj_set_style_pad_hor(edit, UI_PAD * 2, 0);
@@ -465,6 +474,9 @@ void ui_home_show(void)
         lv_obj_set_style_text_font(lv_obj_get_child(wifi, 0), UI_FONT_SMALL, 0);
         s_status = ui_label(col, "", UI_FONT_SMALL, UI_COLOR_MUTED);
         s_web = ui_label(col, "", UI_FONT_SMALL, UI_COLOR_MUTED);
+    #if UI_HW_KEYBOARD
+        lv_obj_add_flag(s_web, LV_OBJ_FLAG_HIDDEN);  // the Account screen shows it
+    #endif
 
         // Search bar with a clear button.
         lv_obj_t *row = lv_obj_create(col);
@@ -483,17 +495,25 @@ void ui_home_show(void)
         lv_obj_set_flex_grow(s_search, 1);
         lv_obj_set_style_text_font(s_search, UI_FONT, 0);
         lv_obj_set_style_radius(s_search, UI_RADIUS, 0);
+        ui_textarea_compact(s_search);
         ui_field_attach_keyboard(s_search, s_kb);
         lv_obj_add_event_cb(s_search, search_changed, LV_EVENT_VALUE_CHANGED, NULL);
         lv_obj_t *clr = ui_button(row, LV_SYMBOL_CLOSE, UI_COLOR_PANEL, search_clear, NULL);
         lv_obj_set_size(clr, UI_CLEAR_BUTTON_W, UI_FIELD_H);
 
+    #if UI_HW_KEYBOARD
+        s_letter = lv_dropdown_create(row);
+        lv_obj_set_width(s_letter, UI_LETTER_W);
+        lv_obj_set_height(s_letter, UI_FIELD_H);
+        lv_obj_set_style_pad_ver(s_letter, (UI_FIELD_H - lv_font_get_line_height(UI_FONT)) / 2 - 2, 0);
+    #else
         s_letter = lv_dropdown_create(col);
+        lv_obj_set_width(s_letter, LV_PCT(100));
+    #endif
         lv_dropdown_set_options(s_letter,
                                 "*\nA\nB\nC\nD\nE\nF\nG\nH\nI\nJ\nK\nL\nM\nN\nO\nP\nQ\nR\nS\nT\nU\nV\nW\nX\nY\nZ\n0-9");
         // Open on favorites when there are some, otherwise on A.
         lv_dropdown_set_selected(s_letter, server_list_favorite_count() ? 0 : 1);
-        lv_obj_set_width(s_letter, LV_PCT(100));
         lv_obj_set_style_text_font(s_letter, UI_FONT, 0);
         lv_obj_set_style_radius(s_letter, UI_RADIUS, 0);
         lv_obj_set_style_text_font(lv_dropdown_get_list(s_letter), UI_FONT, 0);
@@ -503,7 +523,7 @@ void ui_home_show(void)
         s_list = lv_obj_create(col);
         lv_obj_set_width(s_list, LV_PCT(100));
     #if UI_COMPACT
-        lv_obj_set_height(s_list, 104);
+        lv_obj_set_height(s_list, UI_COMPACT_LIST_H);
     #else
         lv_obj_set_flex_grow(s_list, 1);
     #endif

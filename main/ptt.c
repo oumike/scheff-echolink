@@ -6,6 +6,8 @@
 #include "board.h"
 #include "el_qso.h"
 
+#ifdef BOARD_BOOT_BUTTON
+
 // Hold-to-talk on the BOOT/user button, debounced by requiring a stable level for
 // three consecutive 10 ms samples.
 static void ptt_task(void *arg)
@@ -36,3 +38,12 @@ void ptt_button_start(void)
     gpio_config(&io);
     xTaskCreate(ptt_task, "ptt", 2048, NULL, 10, NULL);
 }
+
+#else
+
+// No button on this board (the Tab5): talking is on the screen.
+void ptt_button_start(void)
+{
+}
+
+#endif
