@@ -10,7 +10,34 @@
 #include "display.h"
 #include "server_list.h"
 
-#if CONFIG_IDF_TARGET_ESP32S3
+#if CONFIG_EL_BOARD_CARDPUTER_ZERO
+// 320x170 with a full keyboard: arrows/Tab move the focus, Enter presses,
+// Esc goes back (linux/src/keys_cp0.c), so no on-screen keyboard.
+#define UI_COMPACT          1
+#define UI_HW_KEYBOARD      1
+#define UI_PAD              4
+#define UI_GAP              3
+#define UI_BTN_H            26
+#define UI_FIELD_H          26
+#define UI_RADIUS           4
+#define UI_SAFE_TOP         2
+#define UI_SAFE_BOTTOM      0
+#define UI_FONT_SMALL       (&lv_font_montserrat_12)
+#define UI_FONT             (&lv_font_montserrat_14)
+#define UI_FONT_TITLE       (&lv_font_montserrat_16)
+#define UI_STATUS_BAR_W     72
+#define UI_STATUS_BAR_H     20
+#define UI_SPINNER_SIZE     32
+#define UI_ICON_BUTTON_SIZE 26
+#define UI_EDIT_BUTTON_H    24
+#define UI_CLEAR_BUTTON_W   30
+#define UI_CHAT_TALK_H      40
+#define UI_SLIDER_H         12
+#define UI_VOLUME_VALUE_W   40
+#define UI_COMPACT_LIST_H   86
+#define UI_LETTER_W         64
+#define UI_COMPACT_INFO_H   36
+#elif CONFIG_IDF_TARGET_ESP32S3
 #define UI_COMPACT          1
 #define UI_PAD              6
 #define UI_GAP              4
@@ -31,6 +58,8 @@
 #define UI_CHAT_TALK_H      72
 #define UI_SLIDER_H         16
 #define UI_VOLUME_VALUE_W   44
+#define UI_COMPACT_LIST_H   104
+#define UI_COMPACT_INFO_H   48
 #else
 #define UI_COMPACT          0
 #define UI_PAD              16
@@ -62,6 +91,10 @@
 #define UI_CHAT_TALK_H      210
 #define UI_SLIDER_H         28
 #define UI_VOLUME_VALUE_W   72
+#endif
+
+#ifndef UI_HW_KEYBOARD
+#define UI_HW_KEYBOARD 0
 #endif
 
 #define UI_COLOR_BG      lv_color_hex(0x000000)
@@ -106,6 +139,8 @@ lv_obj_t *ui_layout_create(lv_obj_t *parent, lv_obj_t **out_root, lv_obj_t **out
 lv_obj_t *ui_title(lv_obj_t *parent, const char *text);
 lv_obj_t *ui_label(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color);
 lv_obj_t *ui_button(lv_obj_t *parent, const char *text, lv_color_t color, lv_event_cb_t cb, void *user);
+// Fits a one-line text area to UI_FIELD_H on the CardputerZero.
+void ui_textarea_compact(lv_obj_t *ta);
 // Labelled one-line text field; shows `kb` while focused.
 lv_obj_t *ui_field(lv_obj_t *parent, const char *label, const char *placeholder, lv_obj_t *kb);
 void ui_field_attach_keyboard(lv_obj_t *ta, lv_obj_t *kb);

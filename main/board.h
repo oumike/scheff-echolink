@@ -1,17 +1,28 @@
 #pragma once
 
-// Board support for the LilyGO T-Display-P4, M5Stack Tab5, LilyGO T-Deck Plus
-// and Seeed Wio Tracker L2 targets. CONFIG_EL_BOARD_* selects the board.
+// Board support for the LilyGO T-Display-P4, M5Stack Tab5, LilyGO T-Deck Plus,
+// Seeed Wio Tracker L2 and M5Stack CardputerZero (Linux) targets. CONFIG_EL_BOARD_* selects the board.
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "sdkconfig.h"
 #include "esp_err.h"
+#if !CONFIG_EL_LINUX
 #include "driver/i2c_master.h"
+#endif
 #if CONFIG_IDF_TARGET_ESP32S3
 #include "driver/spi_master.h"
 #endif
 
-#if CONFIG_EL_BOARD_TDISPLAY_P4
+#if CONFIG_EL_BOARD_CARDPUTER_ZERO
+// M5Stack CardputerZero: a Raspberry Pi CM0 running Debian. The hardware is
+// the OS's (framebuffer, evdev keyboard, PulseAudio, NetworkManager); see
+// linux/src/.
+#define BOARD_NAME           "M5Stack CardputerZero"
+#define BOARD_HOSTNAME       "scheff-echolink-cp0"
+#define BOARD_AP_SSID_PREFIX "Scheff-EchoLink-CP0"
+#define BOARD_PTT_HINT       "the Space bar"
+#elif CONFIG_EL_BOARD_TDISPLAY_P4
 #define BOARD_NAME           "LilyGO T-Display-P4"
 #define BOARD_HOSTNAME       "scheff-echolink-p4"
 #define BOARD_AP_SSID_PREFIX "Scheff-EchoLink-P4"
@@ -173,7 +184,9 @@ esp_err_t board_touch_reset_release(bool released);
 // an estimate from the pack voltage on the Tab5.
 esp_err_t board_battery_percent(uint8_t *percent);
 
+#if !CONFIG_EL_LINUX
 // I2C bus 1 (expander, touch) and bus 2 (codec). The Tab5 returns its one
 // shared bus for both.
 i2c_master_bus_handle_t board_main_i2c_bus(void);
 i2c_master_bus_handle_t board_codec_i2c_bus(void);
+#endif

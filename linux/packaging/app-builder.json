@@ -1,0 +1,41 @@
+{
+  "package_name": "scheff-echolink",
+  "app_name": "Scheff EchoLink",
+  "bin_name": "scheff-echolink",
+  "description": "An EchoLink client for licensed amateur radio operators",
+  "store": {
+    "summary": "EchoLink for hams: connect to repeaters, links and conferences",
+    "description": "Browse the EchoLink directory, search for stations, save favorites and connect to repeaters, links and conferences, then hold the Space bar to talk. Audio uses the built-in speaker and microphone, or a USB headset when one is plugged in. Needs a callsign validated by EchoLink (echolink.org) and the device's Wi-Fi; a web page on port 8573 manages the account and saved servers.",
+    "categories": ["Radio & Comms"],
+    "screenshots": [
+      "store/screenshots/home.png",
+      "store/screenshots/qso.png",
+      "store/screenshots/talk.png",
+      "store/screenshots/account.png"
+    ],
+    "icon": "store/icon.png",
+    "license": "GPL-3.0-or-later",
+    "source_repo": "https://github.com/oumike/scheff-echolink",
+    "author": { "github": "oumike", "display_name": "oumike" },
+    "share_code": "SELK",
+    "permissions": {
+      "camera": false,
+      "microphone": true,
+      "imu": false,
+      "network": true,
+      "additional_hardware": false,
+      "background_service": false,
+      "external_display": false
+    },
+    "locales": {
+      "zh-CN": {
+        "title": "Scheff EchoLink",
+        "summary": "业余无线电 EchoLink 客户端：连接中继台、链路和会议"
+      },
+      "ja": {
+        "title": "Scheff EchoLink",
+        "summary": "アマチュア無線用 EchoLink クライアント：レピーター、リンク、会議に接続"
+      }
+    }
+  }
+}

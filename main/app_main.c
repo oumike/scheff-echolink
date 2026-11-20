@@ -37,8 +37,10 @@ void app_main(void)
     ESP_ERROR_CHECK(net_wifi_init());
     if (g_settings.wifi_ssid[0]) {
         net_wifi_connect(g_settings.wifi_ssid, g_settings.wifi_pass);
+#if !CONFIG_EL_LINUX
     } else {
         ESP_LOGW(TAG, "no Wi-Fi configured: set it up on screen, or use 'wifi <ssid> <password>'");
+#endif
     }
 
     web_config_start();

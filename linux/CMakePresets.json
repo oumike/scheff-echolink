@@ -1,0 +1,14 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "cp0",
+      "displayName": "CardputerZero (aarch64, run in linux/docker's container)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cp0",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [{ "name": "cp0", "configurePreset": "cp0" }]
+}

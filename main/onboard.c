@@ -32,7 +32,13 @@ static void notify(void)
 
 bool onboard_wifi_done(void)
 {
+#if CONFIG_EL_LINUX
+    // The OS (NetworkManager) owns Wi-Fi; the Wi-Fi screen is only for
+    // joining another network from Home.
+    return true;
+#else
     return g_settings.wifi_ssid[0] != 0;
+#endif
 }
 
 bool onboard_account_done(void)

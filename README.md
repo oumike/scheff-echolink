@@ -1,14 +1,15 @@
 # scheff-echolink
 
 An EchoLink client for the **LilyGO T-Display-P4** (ESP32-P4), **M5Stack
-Tab5** (ESP32-P4), **LilyGO T-Deck Plus** (ESP32-S3) and **Seeed Wio Tracker
-L2** (ESP32-S3). It uses
+Tab5** (ESP32-P4), **LilyGO T-Deck Plus** (ESP32-S3), **Seeed Wio Tracker
+L2** (ESP32-S3) and the **M5Stack CardputerZero** (Raspberry Pi CM0, Linux).
+It uses
 each board's onboard display, microphone, speaker and Wi-Fi hardware so you
 can connect to EchoLink stations, links, repeaters and conferences without a
 PC.
 
-**Status: early and not yet tested on hardware.** All four targets compile
-with PlatformIO's ESP-IDF v5.5, but none has been verified on a device yet.
+**Status: early.** The ESP32 targets compile with PlatformIO's ESP-IDF v5.5;
+the Tab5 and the CardputerZero have been run on a device, the others not yet.
 The protocol pieces were checked on the host (see
 [Verification](#verification)).
 
@@ -118,6 +119,44 @@ whether a headset is in use, and `set volume` sets the headset's volume too.
   aren't used for PTT.
 - Turn it off with `CONFIG_EL_USB_AUDIO` (menuconfig: EchoLink Client).
 
+## CardputerZero
+
+The CardputerZero runs Debian (aarch64), so it gets a Linux build instead of
+firmware: the same `main/` code on a small ESP-IDF compat layer (`linux/`),
+drawn straight to `/dev/fb0`, with PulseAudio for sound, NetworkManager for
+Wi-Fi and settings in `~/.config/scheff-echolink`. It ships as an arm64
+`.deb` for the launcher (APPLaunch) and is in the CardputerZero app store as
+**Scheff EchoLink** (share code `SELK`). Tested on a device: directory login,
+an ECHOTEST QSO, transmit and receive.
+
+Keys:
+
+| Key | Does |
+| --- | --- |
+| Hold **Space** | Talk (in a QSO) |
+| Arrows, Enter | Move between controls, press |
+| **Esc** | Back |
+| Hold **Esc** 3 s | Quit |
+
+- A USB headset (or USB sound card) is used automatically while it's plugged
+  in; otherwise the built-in speaker and microphone. The volume slider sets
+  the output's system volume.
+- The web config listens on port **8573** (not 80/8080, to stay clear of other
+  apps): `http://<device-ip>:8573/`.
+- Only one copy runs at a time.
+
+Build (Docker; Apple Silicon and arm64 Linux run it natively, x86 needs QEMU):
+
+```bash
+scripts/build-cardputer-zero.sh          # linux/build/cp0/scheff-echolink
+scripts/build-cardputer-zero.sh --deb    # dist/scheff-echolink-cardputer-zero-vX.Y.Z_arm64.deb
+sudo apt install ./scheff-echolink-cardputer-zero-vX.Y.Z_arm64.deb   # on the device
+```
+
+Releases attach the `.deb`. To publish it to the app store, run
+`czdev publish --deb <path to .deb>` from `linux/packaging` (its
+`app-builder.json` holds the store listing, icon and screenshots).
+
 ## Build
 
 ```bash
@@ -159,7 +198,8 @@ Notes:
 ### Releases and bmorcelli's Launcher
 
 Actions → **Release** → Run workflow builds every board, tags `vX.Y.Z` (from
-`VERSION`) and publishes two images per board:
+`VERSION`) and publishes two images per ESP32 board (plus the CardputerZero
+`.deb`, see [CardputerZero](#cardputerzero)):
 
 | Asset | Use |
 | --- | --- |
@@ -369,6 +409,8 @@ main/
   *_wio_l2.c       Wio Tracker L2 board, display, audio and SD
   *_tab5.c         Tab5 board, display and audio (panel_tab5_init.h: panel init lists)
   usb_audio.*      USB headset (UAC host) on the Tab5's USB-A port
+linux/             CardputerZero build: compat/ (ESP-IDF shims), src/ (fb, keys,
+                   Pulse audio, Wi-Fi), packaging/ (.deb, app store listing)
 components/gsm     libgsm 1.0.22 (TU Berlin), unmodified, see COPYRIGHT
 third_party/esp_hosted  LilyGO ESP-Hosted fork (submodule)
 ```
