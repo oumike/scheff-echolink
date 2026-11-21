@@ -242,6 +242,7 @@ static void lv_label_set_text_fmt(lv_obj_t *o, const char *fmt, ...)
 }
 #define lv_textarea_set_text lv_label_set_text
 static const char *lv_textarea_get_text(lv_obj_t *o) { host_object(o); return o->text; }
+#define lv_label_get_text lv_textarea_get_text
 static void lv_keyboard_set_textarea(lv_obj_t *o, lv_obj_t *ta) { host_object(o); o->textarea = ta; }
 static lv_obj_t *lv_keyboard_get_textarea(lv_obj_t *o) { host_object(o); return o->textarea; }
 static void lv_dropdown_set_selected(lv_obj_t *o, unsigned n) { host_object(o); o->value = n; }

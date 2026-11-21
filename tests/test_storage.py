@@ -217,6 +217,53 @@ int main(void) {
 }
 """)
 
+    def test_failed_mutations_preserve_active_and_persisted_list(self):
+        operations = (
+            'server_list_put("KEEP-R", &entry)',
+            'server_list_put(NULL, &entry)',
+            'server_list_set_favorite("KEEP-R", true)',
+            'server_list_delete("KEEP-R")',
+        )
+        for failure in ("fail_writes", "fail_replacement"):
+            for operation in operations:
+                with self.subTest(failure=failure, operation=operation):
+                    self.run_storage(r"""
+int main(void) {
+    seed();
+    server_entry_t entry = {.call = "NEW-R", .node = 42};
+""" + f"{failure} = true;\nassert({operation} != ESP_OK);\n" + r"""
+    assert_original();
+    assert(!s_list[0].favorite);
+    free(s_list);
+}
+""")
+
+    def test_new_entries_and_rename_collisions_commit_atomically(self):
+        self.run_storage(r"""
+int main(void) {
+    seed();
+    server_entry_t entry = {.call = "NEW-R", .node = 42, .type = SERVER_OTHER};
+    assert(server_list_put(NULL, &entry) == ESP_OK);
+    assert(server_list_count() == 2);
+    assert(server_list_search("NEW-R", &entry, 1) == 1);
+    assert(entry.manual && entry.type == SERVER_REPEATER);
+    strcpy(entry.call, "KEEP-R");
+    entry.node = 99;
+    fail_replacement = true;
+    assert(server_list_put("NEW-R", &entry) != ESP_OK);
+    assert(server_list_count() == 2);
+    server_entry_t kept;
+    assert(server_list_search("KEEP-R", &kept, 1) == 1 && kept.node == 10);
+    fail_replacement = false;
+    assert(server_list_put("NEW-R", &entry) == ESP_OK);
+    assert(server_list_count() == 1);
+    assert(server_list_search("KEEP-R", &kept, 1) == 1 && kept.node == 99 && kept.manual);
+    assert(load_file(SERVER_LIST_PATH) == ESP_OK);
+    assert(server_list_count() == 1 && s_list[0].node == 99);
+    free(s_list);
+}
+""")
+
     def test_backup_cannot_silently_drop_unreadable_servers(self):
         self.run_storage(r"""
 static char exported[8192];

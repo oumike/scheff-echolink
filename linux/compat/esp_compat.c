@@ -1,12 +1,14 @@
 // esp_err, esp_log, esp_timer and esp_restart over libc.
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 
@@ -61,4 +63,18 @@ void esp_restart(void)
     }
     perror("esp_restart");
     _exit(1);
+}
+
+void esp_fill_random(void *buf, size_t len)
+{
+    uint8_t *out = buf;
+    while (len) {
+        size_t n = len < 256 ? len : 256;
+        if (getentropy(out, n) != 0) {
+            perror("getentropy");
+            abort();
+        }
+        out += n;
+        len -= n;
+    }
 }

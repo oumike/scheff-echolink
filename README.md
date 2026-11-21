@@ -274,6 +274,12 @@ controls, and scroll workflows that do not fit in one viewport.
 
 You can do the same onboarding from a phone or computer.
 
+- **Unlock the page** with the random access code generated each time the app
+  starts. The Account screen's **Web access** button shows the address and code;
+  from Home, choose **Edit > Web access**. The code is also printed to the local
+  console. All configuration APIs, including backups, require the resulting
+  browser session. Restarting invalidates both the code and existing sessions.
+  Five incorrect attempts block login for 30 seconds.
 - **Until Wi-Fi connects**, the device runs an open setup hotspot (no password)
   named `Scheff-EchoLink-P4-XXXX`, `Scheff-EchoLink-Tab5-XXXX`,
   `Scheff-EchoLink-TDeck-XXXX` or `Scheff-EchoLink-WioL2-XXXX`. Join it and phones open the setup page by
@@ -285,8 +291,8 @@ You can do the same onboarding from a phone or computer.
   device saves the network and restarts before continuing account setup.
 - **After station Wi-Fi gets an IP address**, the hotspot stays up for another
   minute so the page can show the device's new address, then turns off. The page stays
-  available at `http://<device IP>` on your network, and Home shows that
-  address.
+  available at `http://<device IP>` on your network
+  (`http://<device IP>:8573` on CardputerZero).
 
 The page also manages servers:
 
@@ -314,8 +320,9 @@ The page also manages servers:
   writes retain the active list, and failed SD exports retain the previous backup.
 
 The page never displays saved passwords, but complete backup exports contain
-them. Leaving the EchoLink password blank keeps the saved one. The page has no
-login, so anyone on your network can reach it.
+them. Leaving the EchoLink password blank keeps the saved one. Authorization
+does not encrypt HTTP: use a trusted network, and do not forward the web-config
+port to the Internet.
 
 ### Server lists
 
@@ -423,9 +430,15 @@ Run the checked-in host regressions with:
 python3 -m unittest discover -s tests -v
 ```
 
-They require Python 3, a native C compiler with AddressSanitizer/UBSan, and
-Expat headers/library. They compile production logic with hardware, RTOS and
-LVGL test doubles; no board, network service or real flasher is used.
+They require Python 3, Node.js, a native C compiler with AddressSanitizer/UBSan,
+and Expat headers/library. They compile production logic with hardware, RTOS
+and LVGL test doubles and exercise the browser's login and backup handlers;
+no board, external network service or real flasher is used.
+
+The CardputerZero build script additionally runs CTest regressions against its
+real LVGL library: Back navigation, keyboard loss, PTT release, three-second
+Escape hold, and volume persistence. Those cases are skipped by the standalone
+Python command; the socket restart regression requires Linux.
 
 The protocol code follows SvxLink's `echolib`. The following were checked on
 the host:

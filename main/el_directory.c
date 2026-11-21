@@ -1,6 +1,7 @@
 #include "el_directory.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -162,6 +163,7 @@ static char *next_line(char **p, char *end)
 
 static size_t parse_list(char *buf, size_t len, el_station_t **out)
 {
+    *out = NULL;
     char *p = buf, *end = buf + len;
     char *hdr = next_line(&p, end);
     if (!hdr || strcmp(hdr, "@@@") != 0) {
@@ -169,22 +171,27 @@ static size_t parse_list(char *buf, size_t len, el_station_t **out)
         return 0;
     }
     char *line = next_line(&p, end);
-    int count = line ? atoi(line) : 0;
-    if (count <= 0) return 0;
+    char *count_end = NULL;
+    errno = 0;
+    unsigned long count = line ? strtoul(line, &count_end, 10) : 0;
+    if (!line || !isdigit((unsigned char)*line) || *count_end || errno || !count || count > len / 4) {
+        ESP_LOGE(TAG, "invalid list count");
+        return 0;
+    }
 
     el_station_t *list = heap_caps_calloc(count, sizeof(el_station_t), MALLOC_CAP_SPIRAM);
     if (!list) return 0;
-    size_t n = 0;
-    while (n < (size_t)count) {
+    size_t n = 0, records = 0;
+    while (records < count) {
         char *call = next_line(&p, end);
         char *data = next_line(&p, end);
         char *id = next_line(&p, end);
         char *ip = next_line(&p, end);
-        if (!call || !data || !id || !ip) break;
+        if (!call || !data || !id || !ip) goto incomplete;
         if (!strcmp(call, ".")) continue;
+        records++;
         if (!strcmp(call, " ")) {
             ESP_LOGW(TAG, "server: %s", data);
-            count--;
             continue;
         }
         el_station_t *st = &list[n++];
@@ -193,8 +200,19 @@ static size_t parse_list(char *buf, size_t len, el_station_t **out)
         st->node = strtoul(id, NULL, 10);
         st->ip = inet_addr(ip);
     }
+    if (end - p < 3 || memcmp(p, "+++", 3)) goto incomplete;
+    p += 3;
+    while (p < end) {
+        if (*p != '\r' && *p != '\n') goto incomplete;
+        p++;
+    }
     *out = list;
     return n;
+
+incomplete:
+    ESP_LOGE(TAG, "incomplete station list");
+    free(list);
+    return 0;
 }
 
 esp_err_t el_dir_fetch_list(void)

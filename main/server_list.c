@@ -436,43 +436,69 @@ size_t server_list_favorite_count(void)
     return n;
 }
 
-static server_entry_t *find_locked(const char *call)
+static server_entry_t *find_entry(const vec_t *vec, const char *call)
 {
-    for (size_t i = 0; i < s_count; i++) {
-        if (!strcasecmp(s_list[i].call, call)) return &s_list[i];
+    for (size_t i = 0; i < vec->n; i++) {
+        if (!strcasecmp(vec->v[i].call, call)) return &vec->v[i];
     }
     return NULL;
+}
+
+static esp_err_t copy_list_locked(vec_t *copy, size_t extra)
+{
+    copy->n = s_count;
+    copy->cap = s_count + extra;
+    copy->v = copy->cap ? heap_caps_malloc(copy->cap * sizeof(*copy->v), MALLOC_CAP_SPIRAM) : NULL;
+    ESP_RETURN_ON_FALSE(!copy->cap || copy->v, ESP_ERR_NO_MEM, TAG, "copy server list");
+    if (s_count) memcpy(copy->v, s_list, s_count * sizeof(*s_list));
+    return ESP_OK;
+}
+
+// Publish edits only after their replacement file is safely on disk.
+static esp_err_t commit_list_locked(vec_t *next)
+{
+    esp_err_t err = save_list(s_path, next->v, next->n);
+    if (err == ESP_OK) {
+        free(s_list);
+        s_list = next->v;
+        s_count = next->n;
+        s_cap = next->cap;
+        next->v = NULL;
+    }
+    return err;
 }
 
 esp_err_t server_list_put(const char *orig_call, const server_entry_t *entry)
 {
     ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "storage not mounted");
-    ESP_RETURN_ON_FALSE(entry && entry->call[0], ESP_ERR_INVALID_ARG, TAG, "empty callsign");
+    ESP_RETURN_ON_FALSE(entry && entry->call[0] && strnlen(entry->call, sizeof(entry->call)) < sizeof(entry->call),
+                        ESP_ERR_INVALID_ARG, TAG, "invalid callsign");
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    server_entry_t *slot = orig_call && orig_call[0] ? find_locked(orig_call) : NULL;
-    bool is_new = !slot;
-    // Renaming onto another entry's callsign replaces that one; drop the
-    // edited original so the call stays unique.
-    server_entry_t *same = find_locked(entry->call);
-    if (slot && same && same != slot) {
-        *same = s_list[--s_count];
-        if (slot == &s_list[s_count]) slot = same;
-    } else if (!slot) {
-        slot = same;
-    }
-    if (!slot && reserve(s_count + 1)) slot = &s_list[s_count++];
+    vec_t next = {0};
+    esp_err_t err = copy_list_locked(&next, 1);
+    if (err == ESP_OK) {
+        server_entry_t *slot = orig_call && orig_call[0] ? find_entry(&next, orig_call) : NULL;
+        bool is_new = !slot;
+        // Renaming onto another callsign replaces it without keeping duplicates.
+        server_entry_t *same = find_entry(&next, entry->call);
+        if (slot && same && same != slot) {
+            *same = next.v[--next.n];
+            if (slot == &next.v[next.n]) slot = same;
+        } else if (!slot) {
+            slot = same;
+        }
+        if (!slot) slot = &next.v[next.n++];
 
-    esp_err_t err = ESP_ERR_NO_MEM;
-    if (slot) {
-        bool was_manual = slot->manual && !is_new;
+        bool was_manual = !is_new && slot->manual;
         *slot = *entry;
         slot->manual = is_new || was_manual || entry->manual;
         if (slot->type == SERVER_OTHER) slot->type = type_from_call(slot->call);
-        qsort(s_list, s_count, sizeof(*s_list), entry_cmp);
-        err = save_file(s_path);
+        qsort(next.v, next.n, sizeof(*next.v), entry_cmp);
+        err = commit_list_locked(&next);
     }
     xSemaphoreGive(s_lock);
+    free(next.v);
     if (err == ESP_OK) notify_changed();
     return err;
 }
@@ -481,13 +507,18 @@ esp_err_t server_list_set_favorite(const char *call, bool favorite)
 {
     ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "storage not mounted");
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    server_entry_t *e = find_locked(call);
-    esp_err_t err = ESP_ERR_NOT_FOUND;
-    if (e) {
-        e->favorite = favorite;
-        err = save_file(s_path);
+    vec_t next = {0};
+    esp_err_t err = copy_list_locked(&next, 0);
+    if (err == ESP_OK) {
+        server_entry_t *e = find_entry(&next, call);
+        err = ESP_ERR_NOT_FOUND;
+        if (e) {
+            e->favorite = favorite;
+            err = commit_list_locked(&next);
+        }
     }
     xSemaphoreGive(s_lock);
+    free(next.v);
     if (err == ESP_OK) notify_changed();
     return err;
 }
@@ -496,14 +527,19 @@ esp_err_t server_list_delete(const char *call)
 {
     ESP_RETURN_ON_FALSE(s_mounted, ESP_ERR_INVALID_STATE, TAG, "storage not mounted");
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    server_entry_t *e = find_locked(call);
-    esp_err_t err = ESP_ERR_NOT_FOUND;
-    if (e) {
-        memmove(e, e + 1, (s_list + s_count - (e + 1)) * sizeof(*e));
-        s_count--;
-        err = save_file(s_path);
+    vec_t next = {0};
+    esp_err_t err = copy_list_locked(&next, 0);
+    if (err == ESP_OK) {
+        server_entry_t *e = find_entry(&next, call);
+        err = ESP_ERR_NOT_FOUND;
+        if (e) {
+            memmove(e, e + 1, (next.v + next.n - (e + 1)) * sizeof(*e));
+            next.n--;
+            err = commit_list_locked(&next);
+        }
     }
     xSemaphoreGive(s_lock);
+    free(next.v);
     if (err == ESP_OK) notify_changed();
     return err;
 }
@@ -522,13 +558,7 @@ esp_err_t server_list_import_buffer(const char *xml, size_t *count)
         return err;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    err = save_list(s_path, vec.v, vec.n);
-    if (err == ESP_OK) {
-        free(s_list);
-        s_list = vec.v;
-        s_count = vec.n;
-        s_cap = vec.cap;
-    }
+    err = commit_list_locked(&vec);
     xSemaphoreGive(s_lock);
     if (err != ESP_OK) {
         free(vec.v);
