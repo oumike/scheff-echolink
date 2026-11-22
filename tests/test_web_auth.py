@@ -140,7 +140,7 @@ int main(void) {
 int main(void) {
     assert(web_config_start() == ESP_OK);
     httpd_req_t req = {0};
-    char old_code[sizeof(s_access_display)];
+    char old_code[sizeof(s_access_code)];
     strcpy(old_code, web_config_access_code());
     input_code = "wrong";
     for (unsigned i = 0; i < AUTH_MAX_FAILURES; i++) {

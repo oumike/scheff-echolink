@@ -17,7 +17,7 @@ static unsigned host_ap_starts, host_saves, host_restarts, host_disconnects;
 static char host_join_ssid[33], host_join_pass[65];
 static net_join_result_t host_join_result = NET_JOIN_OK;
 
-const char *web_config_access_code(void) { return "0123-4567-89AB-CDEF"; }
+const char *web_config_access_code(void) { return "89AB"; }
 static esp_err_t board_battery_percent(uint8_t *p) { *p = 75; return ESP_OK; }
 static void esp_restart(void) { ++host_restarts; }
 esp_err_t settings_save(void) { ++host_saves; return ESP_OK; }
@@ -160,7 +160,7 @@ class UIFlowsTest(unittest.TestCase):
             host_fill(lv_layer_top(), "Your name (optional)", "Unsaved name");
             host_click(lv_layer_top(), "Web access");
             assert(host_text(lv_layer_top(), LV_SYMBOL_SETTINGS
-                             " Web config: http://192.0.2.1\nAccess code: 0123-4567-89AB-CDEF"));
+                             " Web config: http://192.0.2.1\nAccess code: 89AB"));
             host_click(lv_layer_top(), "OK");
             assert(!strcmp(host_field(lv_layer_top(), "Your name (optional)")->text, "Unsaved name"));
             host_click(lv_layer_top(), "Cancel");

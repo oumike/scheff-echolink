@@ -274,7 +274,7 @@ controls, and scroll workflows that do not fit in one viewport.
 
 You can do the same onboarding from a phone or computer.
 
-- **Unlock the page** with the random access code generated each time the app
+- **Unlock the page** with the random four-character access code generated each time the app
   starts. The Account screen's **Web access** button shows the address and code;
   from Home, choose **Edit > Web access**. The code is also printed to the local
   console. All configuration APIs, including backups, require the resulting

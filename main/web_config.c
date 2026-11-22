@@ -43,7 +43,7 @@ static const char *TAG = "web";
 #define SD_LEGACY_BACKUP_PATH SDCARD_MOUNT "/echolink-p4-backup.xml"
 #define SD_LEGACY_PATH    SDCARD_MOUNT "/echolink-servers.xml"
 #define AUTH_COOKIE      "scheff_session="
-#define AUTH_CODE_BYTES  8
+#define AUTH_CODE_BYTES  2
 #define AUTH_TOKEN_BYTES 16
 #define AUTH_MAX_FAILURES 5
 #define AUTH_RETRY_US    (30 * 1000 * 1000LL)
@@ -55,7 +55,6 @@ static httpd_handle_t s_httpd;
 static volatile bool s_dns_run;
 static bool s_ap_stop_pending;
 static char s_access_code[AUTH_CODE_BYTES * 2 + 1];
-static char s_access_display[AUTH_CODE_BYTES * 2 + 4];
 static char s_session_token[AUTH_TOKEN_BYTES * 2 + 1];
 static unsigned s_auth_failures;
 static int64_t s_auth_retry_us;
@@ -165,7 +164,7 @@ static const char *json_str(cJSON *obj, const char *key)
 
 const char *web_config_access_code(void)
 {
-    return s_httpd ? s_access_display : "";
+    return s_httpd ? s_access_code : "";
 }
 
 static void auth_init(void)
@@ -179,8 +178,6 @@ static void auth_init(void)
         out[0] = hex[random[i] >> 4];
         out[1] = hex[random[i] & 15];
     }
-    snprintf(s_access_display, sizeof(s_access_display), "%.4s-%.4s-%.4s-%.4s",
-             s_access_code, s_access_code + 4, s_access_code + 8, s_access_code + 12);
     s_auth_failures = 0;
     s_auth_retry_us = 0;
 }
@@ -939,6 +936,6 @@ esp_err_t web_config_start(void)
         onboard_changed();
     }
     ESP_LOGI(TAG, "web config on port %u%s", (unsigned)cfg.server_port, net_wifi_ap_active() ? " (setup hotspot up)" : "");
-    printf("Web config access code: %s\n", s_access_display);
+    printf("Web config access code: %s\n", s_access_code);
     return ESP_OK;
 }

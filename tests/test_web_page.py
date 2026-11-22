@@ -56,7 +56,7 @@ const page = vm.createContext({
     calls.push({path, ...options});
     if (path === '/api/auth') {
       if (loginError) return response(429, {error:'Wait 30 seconds and try again.'});
-      assert.equal(JSON.parse(options.body).code, '0123-4567-89AB-CDEF');
+      assert.equal(JSON.parse(options.body).code, '89AB');
       authorized = true;
       return response(200, {authenticated:true});
     }
@@ -88,7 +88,7 @@ class WebPageTests(unittest.TestCase):
         run_page(r"""
 assert.equal(elements.config.hidden, true);
 assert.equal(elements['s-auth'].hidden, false);
-elements.code.value = '0123-4567-89AB-CDEF';
+elements.code.value = '89AB';
 loginError = true;
 await elements['auth-form'].onsubmit({preventDefault(){}});
 assert.equal(elements.config.hidden, true);
