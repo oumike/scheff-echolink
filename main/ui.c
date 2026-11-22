@@ -403,7 +403,8 @@ bool ui_run_async(const char *name, void (*fn)(void *), void *arg)
 
 // ---- boot ------------------------------------------------------------------
 
-void ui_web_hint_update(lv_obj_t *label)
+// Sets the label to how to reach the web config; returns whether it's reachable.
+static bool web_address_update(lv_obj_t *label)
 {
     char ip[16];
     bool sta = net_wifi_sta_ip(ip, sizeof(ip));
@@ -427,8 +428,13 @@ void ui_web_hint_update(lv_obj_t *label)
     } else {
         lv_label_set_text(label, "");
     }
+    return sta || ap;
+}
+
+void ui_web_hint_update(lv_obj_t *label)
+{
     const char *code = web_config_access_code();
-    if ((sta || ap) && code[0]) {
+    if (web_address_update(label) && code[0]) {
         char hint[384];
         snprintf(hint, sizeof(hint), "%s\nAccess code: %s", lv_label_get_text(label), code);
         lv_label_set_text(label, hint);
@@ -438,7 +444,12 @@ void ui_web_hint_update(lv_obj_t *label)
 void ui_web_access_show(void)
 {
     lv_obj_t *box = modal_box();
-    ui_web_hint_update(modal_text(box, "", UI_COLOR_MUTED));
+    const char *code = web_config_access_code();
+    if (web_address_update(modal_text(box, "", UI_COLOR_MUTED)) && code[0]) {
+        ui_label(box, "Access code", UI_FONT_SMALL, UI_COLOR_MUTED);
+        lv_obj_t *l = ui_label(box, code, UI_FONT_TITLE, lv_color_white());
+        lv_obj_set_style_text_letter_space(l, UI_GAP, 0);
+    }
     ui_button(box, "OK", UI_COLOR_ACCENT, modal_ok, NULL);
 }
 

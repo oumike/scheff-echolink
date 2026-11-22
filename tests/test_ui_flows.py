@@ -159,8 +159,9 @@ class UIFlowsTest(unittest.TestCase):
             host_click(home, "Edit");
             host_fill(lv_layer_top(), "Your name (optional)", "Unsaved name");
             host_click(lv_layer_top(), "Web access");
-            assert(host_text(lv_layer_top(), LV_SYMBOL_SETTINGS
-                             " Web config: http://192.0.2.1\nAccess code: 89AB"));
+            assert(host_text(lv_layer_top(), LV_SYMBOL_SETTINGS " Web config: http://192.0.2.1"));
+            assert(host_text(lv_layer_top(), "Access code"));
+            assert(host_text(lv_layer_top(), "89AB"));
             host_click(lv_layer_top(), "OK");
             assert(!strcmp(host_field(lv_layer_top(), "Your name (optional)")->text, "Unsaved name"));
             host_click(lv_layer_top(), "Cancel");
