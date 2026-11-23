@@ -1,6 +1,7 @@
 #include "usb_audio.h"
 
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -51,11 +52,11 @@ static const uint8_t k_mults[] = {1, 2, 4, 6, 3};
 // Many adapters (C-Media's in particular) mix the microphone into the
 // headphone output in hardware (Linux calls it "Mic Playback"). That is
 // sidetone the user hears as feedback, and the UAC driver doesn't expose it,
-// so silence it ourselves: any feature unit that carries a physical input
-// towards a speaker or headphone terminal is muted, and failing that, the
-// mixer unit's controls for its microphone inputs are turned all the way down.
+// so silence monitor-only feature units or mixer inputs ourselves. Never
+// change a control that also feeds the USB microphone capture stream.
 
 #define UAC_CS_INTERFACE     0x24
+#define UAC_HEADER           0x01
 #define UAC_INPUT_TERMINAL   0x02
 #define UAC_OUTPUT_TERMINAL  0x03
 #define UAC_MIXER_UNIT       0x04
@@ -78,7 +79,20 @@ typedef struct {
 } unit_t;
 
 static usb_host_client_handle_t s_client;
-static volatile bool s_ctrl_done;
+
+typedef struct {
+    usb_device_handle_t handle;
+    atomic_uint refs;
+} ctrl_device_t;
+
+// A timeout drops only the waiter's reference. The callback still owns the
+// request and keeps the device open until its transfer has actually finished.
+typedef struct {
+    ctrl_device_t *device;
+    atomic_uint refs;
+    atomic_bool done;
+    esp_err_t result;
+} ctrl_request_t;
 
 static void client_cb(const usb_host_client_event_msg_t *msg, void *arg) {}
 
@@ -87,9 +101,28 @@ static void client_task(void *arg)
     for (;;) usb_host_client_handle_events(s_client, portMAX_DELAY);
 }
 
+static void ctrl_device_release(ctrl_device_t *dev)
+{
+    if (atomic_fetch_sub(&dev->refs, 1) != 1) return;
+    esp_err_t err = usb_host_device_close(s_client, dev->handle);
+    if (err != ESP_OK) ESP_LOGW(TAG, "mic monitor: device close: %s", esp_err_to_name(err));
+    free(dev);
+}
+
+static void ctrl_release(ctrl_request_t *req)
+{
+    if (atomic_fetch_sub(&req->refs, 1) != 1) return;
+    ctrl_device_release(req->device);
+    free(req);
+}
+
 static void ctrl_done_cb(usb_transfer_t *xfer)
 {
-    s_ctrl_done = true;
+    ctrl_request_t *req = xfer->context;
+    req->result = xfer->status == USB_TRANSFER_STATUS_COMPLETED ? ESP_OK : ESP_FAIL;
+    usb_host_transfer_free(xfer);
+    atomic_store(&req->done, true);
+    ctrl_release(req);
 }
 
 static const unit_t *find_unit(const unit_t *u, int n, uint8_t id)
@@ -114,18 +147,24 @@ static bool from_physical_input(const unit_t *u, int n, uint8_t id)
     return false;
 }
 
-// Whether a unit's output reaches a speaker or headphone terminal rather than
-// only the USB capture stream.
-static bool reaches_output(const unit_t *u, int n, uint8_t id, int depth)
+static bool reaches_output(const unit_t *u, int n, uint8_t id, bool usb_capture)
 {
-    if (depth > MAX_UNITS) return false;
-    for (int i = 0; i < n; i++) {
-        for (int s = 0; s < u[i].nsrc; s++) {
-            if (u[i].src[s] != id) continue;
-            if (u[i].subtype == UAC_OUTPUT_TERMINAL) {
-                if (u[i].term_type != UAC_TT_USB_STREAMING) return true;
-            } else if (reaches_output(u, n, u[i].id, depth + 1)) {
-                return true;
+    bool seen[MAX_UNITS] = {0};
+    uint8_t pending[MAX_UNITS + 1] = {id};
+    int head = 0, tail = 1;
+    while (head < tail) {
+        uint8_t from = pending[head++];
+        for (int i = 0; i < n; i++) {
+            if (seen[i]) continue;
+            for (int s = 0; s < u[i].nsrc; s++) {
+                if (u[i].src[s] != from) continue;
+                seen[i] = true;
+                if (u[i].subtype == UAC_OUTPUT_TERMINAL) {
+                    if ((u[i].term_type == UAC_TT_USB_STREAMING) == usb_capture) return true;
+                } else {
+                    pending[tail++] = u[i].id;
+                }
+                break;
             }
         }
     }
@@ -144,11 +183,25 @@ static int channels_of(const unit_t *u, int n, uint8_t id)
     return 1;
 }
 
-static esp_err_t set_cur(usb_device_handle_t dev, uint8_t ac_iface, uint8_t unit, uint16_t value, const uint8_t *data,
+static esp_err_t set_cur(ctrl_device_t *dev, uint8_t ac_iface, uint8_t unit, uint16_t value, const uint8_t *data,
                          uint8_t len)
 {
+    ctrl_request_t *req = calloc(1, sizeof(*req));
+    if (!req) {
+        ESP_LOGE(TAG, "mic monitor: request allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+    req->device = dev;
+    atomic_init(&req->refs, 1);
+    atomic_init(&req->done, false);
+    atomic_fetch_add(&dev->refs, 1);
     usb_transfer_t *xfer;
-    ESP_RETURN_ON_ERROR(usb_host_transfer_alloc(USB_SETUP_PACKET_SIZE + len, 0, &xfer), TAG, "xfer alloc");
+    esp_err_t err = usb_host_transfer_alloc(USB_SETUP_PACKET_SIZE + len, 0, &xfer);
+    if (err != ESP_OK) {
+        ctrl_release(req);
+        ESP_LOGE(TAG, "mic monitor: transfer allocation: %s", esp_err_to_name(err));
+        return err;
+    }
     usb_setup_packet_t *setup = (usb_setup_packet_t *)xfer->data_buffer;
     setup->bmRequestType = USB_BM_REQUEST_TYPE_DIR_OUT | USB_BM_REQUEST_TYPE_TYPE_CLASS |
                            USB_BM_REQUEST_TYPE_RECIP_INTERFACE;
@@ -158,16 +211,21 @@ static esp_err_t set_cur(usb_device_handle_t dev, uint8_t ac_iface, uint8_t unit
     setup->wLength = len;
     memcpy(xfer->data_buffer + USB_SETUP_PACKET_SIZE, data, len);
     xfer->num_bytes = USB_SETUP_PACKET_SIZE + len;
-    xfer->device_handle = dev;
+    xfer->device_handle = dev->handle;
     xfer->bEndpointAddress = 0;
     xfer->callback = ctrl_done_cb;
+    xfer->context = req;
     xfer->timeout_ms = 500;
-    s_ctrl_done = false;
-    esp_err_t err = usb_host_transfer_submit_control(s_client, xfer);
-    for (int i = 0; err == ESP_OK && !s_ctrl_done && i < 50; i++) vTaskDelay(pdMS_TO_TICKS(10));
-    if (err == ESP_OK) err = !s_ctrl_done ? ESP_ERR_TIMEOUT
-                           : xfer->status == USB_TRANSFER_STATUS_COMPLETED ? ESP_OK : ESP_FAIL;
-    if (s_ctrl_done) usb_host_transfer_free(xfer);  // else still owned by the stack
+    atomic_fetch_add(&req->refs, 1);
+    err = usb_host_transfer_submit_control(s_client, xfer);
+    if (err != ESP_OK) {
+        usb_host_transfer_free(xfer);
+        ctrl_release(req);  // no callback for an unsubmitted transfer
+    } else {
+        for (int i = 0; !atomic_load(&req->done) && i < 50; i++) vTaskDelay(pdMS_TO_TICKS(10));
+        err = atomic_load(&req->done) ? req->result : ESP_ERR_TIMEOUT;
+    }
+    ctrl_release(req);
     return err;
 }
 
@@ -176,7 +234,7 @@ static const uint8_t k_silent[2] = {0x00, 0x80};  // 0x8000: -inf dB
 
 // Mutes one feature unit: through its master control if it has one, else on
 // every channel that has a mute or volume control.
-static int mute_feature_unit(usb_device_handle_t dev, uint8_t ac_iface, const unit_t *fu)
+static int mute_feature_unit(ctrl_device_t *dev, uint8_t ac_iface, const unit_t *fu)
 {
     int ok = 0;
     for (int ch = 0; ch < fu->fu_nctl; ch++) {
@@ -198,7 +256,7 @@ static int mute_feature_unit(usb_device_handle_t dev, uint8_t ac_iface, const un
 
 // Turns down a mixer unit's controls from each physical input's channels to
 // every output channel. Controls the mixer doesn't have just stall.
-static int mute_mixer_inputs(usb_device_handle_t dev, uint8_t ac_iface, const unit_t *u, int n, const unit_t *mx)
+static int mute_mixer_inputs(ctrl_device_t *dev, uint8_t ac_iface, const unit_t *u, int n, const unit_t *mx)
 {
     int ok = 0, in_ch = 1;
     for (int s = 0; s < mx->nsrc; s++) {
@@ -218,45 +276,68 @@ static int mute_mixer_inputs(usb_device_handle_t dev, uint8_t ac_iface, const un
 
 static void mute_monitor(uint8_t addr)
 {
-    usb_device_handle_t dev;
     if (!s_client) return;
-    esp_err_t err = usb_host_device_open(s_client, addr, &dev);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "mic monitor: can't open device %u: %s", addr, esp_err_to_name(err));
+    ctrl_device_t *dev = calloc(1, sizeof(*dev));
+    if (!dev) {
+        ESP_LOGE(TAG, "mic monitor: device allocation failed");
         return;
     }
+    esp_err_t err = usb_host_device_open(s_client, addr, &dev->handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mic monitor: can't open device %u: %s", addr, esp_err_to_name(err));
+        free(dev);
+        return;
+    }
+    atomic_init(&dev->refs, 1);
     const usb_config_desc_t *cfg;
-    if (usb_host_get_active_config_descriptor(dev, &cfg) != ESP_OK) {
-        usb_host_device_close(s_client, dev);
+    err = usb_host_get_active_config_descriptor(dev->handle, &cfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mic monitor: descriptors: %s", esp_err_to_name(err));
+        ctrl_device_release(dev);
         return;
     }
 
     static unit_t units[MAX_UNITS];
     int n = 0;
     int ac_iface = -1;
-    bool in_ac = false;
+    bool in_ac = false, complete = true;
     const uint8_t *p = (const uint8_t *)cfg, *end = p + cfg->wTotalLength;
     while (p + 2 <= end && p[0] >= 2 && p + p[0] <= end) {
         const uint8_t len = p[0], type = p[1];
         if (type == USB_B_DESCRIPTOR_TYPE_INTERFACE && len >= 9) {
             in_ac = p[5] == 0x01 && p[6] == 0x01;  // audio class, audio control subclass
-            if (in_ac) ac_iface = p[2];
-        } else if (in_ac && type == UAC_CS_INTERFACE && len >= 4 && n < MAX_UNITS) {
+            if (in_ac) {
+                if (ac_iface >= 0) complete = false;
+                ac_iface = p[2];
+            }
+        } else if (in_ac && type == UAC_CS_INTERFACE && len >= 4) {
+            if (p[2] == UAC_HEADER) {
+                p += len;
+                continue;
+            }
+            if (n == MAX_UNITS) {
+                complete = false;
+                p += len;
+                continue;
+            }
             unit_t u = {.id = p[3], .subtype = p[2]};
             switch (u.subtype) {
             case UAC_INPUT_TERMINAL:
                 if (len >= 8) u.term_type = p[4] | p[5] << 8, u.nch = p[7];
+                else complete = false;
                 break;
             case UAC_OUTPUT_TERMINAL:
                 if (len >= 8) u.term_type = p[4] | p[5] << 8, u.nsrc = 1, u.src[0] = p[7];
+                else complete = false;
                 break;
             case UAC_MIXER_UNIT:
             case UAC_SELECTOR_UNIT:
                 if (len >= 5) {
                     int pins = p[4];
+                    if (pins > MAX_SRCS || 5 + pins >= len) complete = false;
                     for (int i = 0; i < pins && i < MAX_SRCS && 5 + i < len; i++) u.src[u.nsrc++] = p[5 + i];
                     if (u.subtype == UAC_MIXER_UNIT && 5 + pins < len) u.nch = p[5 + pins];
-                }
+                } else complete = false;
                 break;
             case UAC_FEATURE_UNIT:
                 if (len >= 7 && p[5]) {
@@ -264,10 +345,11 @@ static void mute_monitor(uint8_t addr)
                     int size = p[5];
                     int count = (len - 7) / size;
                     for (int ch = 0; ch < count && ch <= MAX_CH; ch++) u.fu_ctl[u.fu_nctl++] = p[6 + ch * size];
-                }
+                } else complete = false;
                 break;
             default:
                 u.id = 0;
+                complete = false;
                 break;
             }
             if (u.id) {
@@ -280,21 +362,34 @@ static void mute_monitor(uint8_t addr)
         p += len;
     }
 
+    for (int i = 0; i < n; i++) {
+        for (int s = 0; s < units[i].nsrc; s++) {
+            if (!find_unit(units, n, units[i].src[s])) complete = false;
+        }
+    }
+    if (!complete || p != end) {
+        ESP_LOGW(TAG, "mic monitor: incomplete or unsupported topology; preserving capture controls");
+        ctrl_device_release(dev);
+        return;
+    }
+
     int muted = 0;
     for (int i = 0; ac_iface >= 0 && i < n; i++) {
         const unit_t *fu = &units[i];
         if (fu->subtype != UAC_FEATURE_UNIT) continue;
-        if (!from_physical_input(units, n, fu->id) || !reaches_output(units, n, fu->id, 0)) continue;
+        if (!from_physical_input(units, n, fu->id) || !reaches_output(units, n, fu->id, false) ||
+            reaches_output(units, n, fu->id, true)) continue;
         ESP_LOGI(TAG, "mic monitor path: feature unit %u", fu->id);
         muted += mute_feature_unit(dev, ac_iface, fu);
     }
     for (int i = 0; !muted && ac_iface >= 0 && i < n; i++) {
-        if (units[i].subtype == UAC_MIXER_UNIT && reaches_output(units, n, units[i].id, 0)) {
+        if (units[i].subtype == UAC_MIXER_UNIT && reaches_output(units, n, units[i].id, false) &&
+            !reaches_output(units, n, units[i].id, true)) {
             muted += mute_mixer_inputs(dev, ac_iface, units, n, &units[i]);
         }
     }
     ESP_LOGI(TAG, "mic monitor: %s", muted ? "muted" : "no control found to mute it");
-    usb_host_device_close(s_client, dev);
+    ctrl_device_release(dev);
 }
 
 static bool has_rate(const uac_host_dev_alt_param_t *p, uint32_t hz)

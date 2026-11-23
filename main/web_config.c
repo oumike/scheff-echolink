@@ -11,6 +11,7 @@
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "audio.h"
@@ -41,6 +42,11 @@ static const char *TAG = "web";
 // echolink-p4-backup.xml; a card may still hold one, and import reads it.
 #define SD_LEGACY_BACKUP_PATH SDCARD_MOUNT "/echolink-p4-backup.xml"
 #define SD_LEGACY_PATH    SDCARD_MOUNT "/echolink-servers.xml"
+#define AUTH_COOKIE      "scheff_session="
+#define AUTH_CODE_BYTES  2
+#define AUTH_TOKEN_BYTES 16
+#define AUTH_MAX_FAILURES 5
+#define AUTH_RETRY_US    (30 * 1000 * 1000LL)
 
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern const char index_html_end[] asm("_binary_index_html_end");
@@ -48,6 +54,10 @@ extern const char index_html_end[] asm("_binary_index_html_end");
 static httpd_handle_t s_httpd;
 static volatile bool s_dns_run;
 static bool s_ap_stop_pending;
+static char s_access_code[AUTH_CODE_BYTES * 2 + 1];
+static char s_session_token[AUTH_TOKEN_BYTES * 2 + 1];
+static unsigned s_auth_failures;
+static int64_t s_auth_retry_us;
 
 static struct {
     enum { JOIN_IDLE, JOIN_BUSY, JOIN_OK, JOIN_FAILED } state;
@@ -150,6 +160,120 @@ static const char *json_str(cJSON *obj, const char *key)
     return cJSON_IsString(v) ? v->valuestring : "";
 }
 
+// ---- local authorization ---------------------------------------------------
+
+const char *web_config_access_code(void)
+{
+    return s_httpd ? s_access_code : "";
+}
+
+static void auth_init(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    uint8_t random[AUTH_CODE_BYTES + AUTH_TOKEN_BYTES];
+    esp_fill_random(random, sizeof(random));
+    for (size_t i = 0; i < sizeof(random); i++) {
+        char *out = i < AUTH_CODE_BYTES ? s_access_code + i * 2
+                                        : s_session_token + (i - AUTH_CODE_BYTES) * 2;
+        out[0] = hex[random[i] >> 4];
+        out[1] = hex[random[i] & 15];
+    }
+    s_auth_failures = 0;
+    s_auth_retry_us = 0;
+}
+
+static bool auth_equal(const char *left, const char *right, size_t len)
+{
+    unsigned diff = 0;
+    for (size_t i = 0; i < len; i++) diff |= (unsigned char)left[i] ^ (unsigned char)right[i];
+    return diff == 0;
+}
+
+static bool auth_code_matches(const char *input)
+{
+    char code[sizeof(s_access_code)] = {0};
+    size_t n = 0;
+    for (; *input; input++) {
+        if (*input == '-' || *input == ' ') continue;
+        if (!isxdigit((unsigned char)*input) || n == sizeof(code) - 1) return false;
+        code[n++] = toupper((unsigned char)*input);
+    }
+    return n == sizeof(code) - 1 && auth_equal(code, s_access_code, n);
+}
+
+static bool same_origin(httpd_req_t *req)
+{
+    char site[32], origin[160], host[128], expected[sizeof(host) + 8];
+    if (httpd_req_get_hdr_value_len(req, "Sec-Fetch-Site")) {
+        if (httpd_req_get_hdr_value_str(req, "Sec-Fetch-Site", site, sizeof(site)) != ESP_OK ||
+            (strcmp(site, "same-origin") && strcmp(site, "none"))) return false;
+    }
+    if (!httpd_req_get_hdr_value_len(req, "Origin")) return true;
+    if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK ||
+        httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+    snprintf(expected, sizeof(expected), "http://%s", host);
+    return !strcmp(origin, expected);
+}
+
+static bool authenticated(httpd_req_t *req)
+{
+    char cookies[512];
+    if (!s_session_token[0] ||
+        httpd_req_get_hdr_value_str(req, "Cookie", cookies, sizeof(cookies)) != ESP_OK) return false;
+    const size_t prefix = sizeof(AUTH_COOKIE) - 1, token_len = sizeof(s_session_token) - 1;
+    for (char *p = cookies; *p;) {
+        while (*p == ' ' || *p == ';') p++;
+        char *end = strchr(p, ';');
+        if (!end) end = p + strlen(p);
+        if ((size_t)(end - p) == prefix + token_len && !memcmp(p, AUTH_COOKIE, prefix) &&
+            auth_equal(p + prefix, s_session_token, token_len)) return true;
+        p = end;
+    }
+    return false;
+}
+
+static esp_err_t h_auth(httpd_req_t *req)
+{
+    if (!same_origin(req)) return send_error(req, "403 Forbidden", "Cross-site requests are not allowed.");
+    int64_t now = esp_timer_get_time();
+    if (now < s_auth_retry_us) {
+        char retry[12];
+        snprintf(retry, sizeof(retry), "%u", (unsigned)((s_auth_retry_us - now + 999999) / 1000000));
+        httpd_resp_set_hdr(req, "Retry-After", retry);
+        return send_error(req, "429 Too Many Requests", "Too many attempts. Wait 30 seconds and try again.");
+    }
+    if (s_auth_retry_us) {
+        s_auth_failures = 0;
+        s_auth_retry_us = 0;
+    }
+    cJSON *body = read_json(req);
+    if (!body) return send_error(req, "400 Bad Request", "Expected an access code.");
+    bool valid = auth_code_matches(json_str(body, "code"));
+    cJSON_Delete(body);
+    if (!valid) {
+        if (++s_auth_failures >= AUTH_MAX_FAILURES) s_auth_retry_us = now + AUTH_RETRY_US;
+        return send_error(req, "401 Unauthorized", "Enter the current access code shown on the device.");
+    }
+    s_auth_failures = 0;
+    char cookie[128];
+    snprintf(cookie, sizeof(cookie), AUTH_COOKIE "%s; Path=/; HttpOnly; SameSite=Strict", s_session_token);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result, "authenticated", true);
+    return send_json(req, result);
+}
+
+static esp_err_t h_authorized(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (!authenticated(req)) {
+        return send_error(req, "401 Unauthorized", "Enter the current access code shown on the device.");
+    }
+    if (!same_origin(req)) return send_error(req, "403 Forbidden", "Cross-site requests are not allowed.");
+    const httpd_uri_t *route = req->user_ctx;
+    return route ? route->handler(req) : httpd_resp_send_500(req);
+}
+
 typedef esp_err_t (*backup_write_cb_t)(void *ctx, const char *data, size_t len);
 
 static esp_err_t backup_write_text(backup_write_cb_t write, void *ctx, const char *text)
@@ -234,7 +358,8 @@ static esp_err_t backup_parse_settings(const char *xml, settings_t *settings, bo
 static void restored_wifi_task(void *arg)
 {
     vTaskDelay(pdMS_TO_TICKS(500));
-    net_wifi_connect(g_settings.wifi_ssid, g_settings.wifi_pass);
+    esp_err_t err = net_wifi_connect(g_settings.wifi_ssid, g_settings.wifi_pass);
+    if (err != ESP_OK) ESP_LOGE(TAG, "could not connect to restored Wi-Fi: %s", esp_err_to_name(err));
     onboard_settings_changed();
     vTaskDelete(NULL);
 }
@@ -273,6 +398,7 @@ static esp_err_t h_index(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Frame-Options", "DENY");
     return httpd_resp_send(req, index_html_start, index_html_end - index_html_start - 1);
 }
 
@@ -757,6 +883,7 @@ static void onboard_changed(void)
 
 esp_err_t web_config_start(void)
 {
+    auth_init();
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 16;
     cfg.lru_purge_enable = true;
@@ -769,6 +896,7 @@ esp_err_t web_config_start(void)
 
     static const httpd_uri_t uris[] = {
         {.uri = "/", .method = HTTP_GET, .handler = h_index},
+        {.uri = "/api/auth", .method = HTTP_POST, .handler = h_auth},
         {.uri = "/api/status", .method = HTTP_GET, .handler = h_status},
         {.uri = "/api/scan", .method = HTTP_GET, .handler = h_scan},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = h_wifi},
@@ -782,7 +910,20 @@ esp_err_t web_config_start(void)
         {.uri = "/api/sd/export", .method = HTTP_POST, .handler = h_sd_export},
         {.uri = "/api/sd/import", .method = HTTP_POST, .handler = h_sd_import},
     };
-    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) httpd_register_uri_handler(s_httpd, &uris[i]);
+    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
+        httpd_uri_t route = uris[i];
+        if (route.handler != h_index && route.handler != h_auth) {
+            route.handler = h_authorized;
+            route.user_ctx = (void *)&uris[i];
+        }
+        e = httpd_register_uri_handler(s_httpd, &route);
+        if (e != ESP_OK) {
+            ESP_LOGE(TAG, "registering %s failed: %s", route.uri, esp_err_to_name(e));
+            httpd_stop(s_httpd);
+            s_httpd = NULL;
+            return e;
+        }
+    }
     httpd_register_err_handler(s_httpd, HTTPD_404_NOT_FOUND, h_not_found);
 
     onboard_set_web_cb(onboard_changed);
@@ -795,5 +936,6 @@ esp_err_t web_config_start(void)
         onboard_changed();
     }
     ESP_LOGI(TAG, "web config on port %u%s", (unsigned)cfg.server_port, net_wifi_ap_active() ? " (setup hotspot up)" : "");
+    printf("Web config access code: %s\n", s_access_code);
     return ESP_OK;
 }

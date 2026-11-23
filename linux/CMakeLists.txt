@@ -85,6 +85,14 @@ pkg_check_modules(CJSON REQUIRED IMPORTED_TARGET libcjson)
 target_link_libraries(scheff-echolink PRIVATE lvgl gsm el_compat PkgConfig::PULSE PkgConfig::EXPAT
   PkgConfig::CJSON m)
 
+enable_testing()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME linux-controls COMMAND "${CMAKE_COMMAND}" -E env
+  "EL_LVGL_LIBRARY=$<TARGET_FILE:lvgl>"
+  "EL_LVGL_INCLUDE=${lvgl_SOURCE_DIR}"
+  "PYTHONDONTWRITEBYTECODE=1"
+  "${Python3_EXECUTABLE}" -m unittest discover -s "${REPO}/tests" -p test_linux_controls.py -v)
+
 # The package: cpack -G DEB in build/cp0 gives
 # scheff-echolink-cardputer-zero-v<version>_arm64.deb, laid out for the
 # CardputerZero's launcher (APPLaunch), which notices the .desktop file

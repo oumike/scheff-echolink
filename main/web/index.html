@@ -45,6 +45,18 @@ button.plain{background:#2a2f38}button.stop{background:var(--stop)}
 <h1>EchoLink</h1>
 <p class="sub">Set up Wi-Fi and your EchoLink account. The device screen follows along.</p>
 
+<section id="s-auth">
+  <h2>Unlock configuration</h2>
+  <p class="hint">Enter the access code shown on the device or its local console. It changes each time the app starts.</p>
+  <p class="hint">Use a trusted network: this HTTP connection is not encrypted.</p>
+  <form id="auth-form">
+    <label for="code">Device access code</label>
+    <input id="code" type="password" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="XXXX" required>
+    <button id="unlock" type="submit">Unlock</button>
+  </form>
+  <div id="auth-msg" class="msg"></div>
+</section>
+<div id="config" hidden>
 <section id="s-status">
   <h2>Status</h2>
   <div id="status">Loading…</div>
@@ -121,22 +133,35 @@ button.plain{background:#2a2f38}button.stop{background:var(--stop)}
   <button id="sdi" class="plain" type="button">Import from SD card</button>
   <div id="bmsg" class="msg"></div>
 </section>
+</div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let joining=false,filled=false;
+let joining=false,filled=false,unlocked=false;
 function msg(el,cls,text){el.className='msg show '+cls;el.textContent=text}
 function row(k,v){return '<div class="row"><span>'+k+'</span><span>'+v+'</span></div>'}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function setUnlocked(value){
+  unlocked=value;$('config').hidden=!value;$('s-auth').hidden=value;
+}
+async function request(path,options={}){
+  const r=await fetch(path,{...options,credentials:'same-origin'});
+  if(!r.ok){
+    if(r.status===401)setUnlocked(false);
+    const j=await r.json().catch(()=>({}));
+    throw new Error(j.error||('HTTP '+r.status));
+  }
+  return r;
+}
 async function api(path,body){
-  const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
-  return j;
+  const r=await request(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+  return r.json();
 }
 async function refresh(){
   let s;
   try{s=await api('/api/status')}catch(e){$('status').textContent='Device not reachable - it may be switching networks. Retrying…';return}
+  const first=!unlocked;setUnlocked(true);
+  if(first){$('letter').value=s.favorites?'*':'A';loadServers()}
   const w=s.wifi,a=s.account;
   $('status').innerHTML=
     row('Wi-Fi',w.connected?esc(w.ssid)+' ('+esc(w.ip)+')':(w.ssid?'connecting to '+esc(w.ssid)+'…':'not set up'))+
@@ -154,10 +179,18 @@ async function refresh(){
   }
   const j=s.join;
   if(j.state==='joining'){msg($('wmsg'),'busy','Connecting to '+j.ssid+'…')}
-  else if(joining&&j.state==='ok'){joining=false;msg($('wmsg'),'ok','Connected! The device is restarting. Reconnect to your Wi-Fi, then open http://'+w.ip)}
+  else if(joining&&j.state==='ok'){joining=false;msg($('wmsg'),'ok','Connected! The device is restarting. Open http://'+w.ip+(location.port?':'+location.port:'')+' and enter its new access code.')}
   else if(joining&&j.state==='failed'){joining=false;msg($('wmsg'),'err',j.msg)}
   $('join').disabled=j.state==='joining';
 }
+$('auth-form').onsubmit=async e=>{
+  e.preventDefault();$('unlock').disabled=true;
+  try{
+    await api('/api/auth',{code:$('code').value.trim()});
+    $('code').value='';$('auth-msg').className='msg';filled=false;await refresh();
+  }catch(error){msg($('auth-msg'),'err',error.message)}
+  finally{$('unlock').disabled=false}
+};
 $('scan').onclick=async()=>{
   const b=$('scan');b.disabled=true;b.textContent='Scanning…';
   try{
@@ -245,14 +278,20 @@ $('f-del').onclick=async()=>{
   catch(e){msg($('smsg'),'err',e.message)}
 };
 // ---- backup ----
-$('dl').onclick=()=>{location.href='/api/servers/export'};
+$('dl').onclick=async()=>{
+  try{
+    const r=await request('/api/servers/export'),url=URL.createObjectURL(await r.blob());
+    const a=document.createElement('a');a.href=url;a.download='scheff-echolink-backup.xml';a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(e){msg($('bmsg'),'err',e.message)}
+};
 $('up').onclick=()=>$('upfile').click();
 $('upfile').onchange=async e=>{
   const f=e.target.files[0];e.target.value='';
   if(!f||!confirm('Restore settings and replace the server list from '+f.name+'?'))return;
   msg($('bmsg'),'busy','Importing '+f.name+'…');
-  try{const r=await fetch('/api/servers/import',{method:'POST',headers:{'Content-Type':'application/xml'},body:await f.text()});
-    const j=await r.json();if(!r.ok)throw new Error(j.error||'Import failed');
+  try{const r=await request('/api/servers/import',{method:'POST',headers:{'Content-Type':'application/xml'},body:await f.text()});
+    const j=await r.json();
     const done=j.settings?'Restored all settings and '+j.count+' servers.':'Imported '+j.count+' servers from a legacy file; settings were unchanged.';
     msg($('bmsg'),'ok',done+(j.reconnecting?' The device is reconnecting to the restored Wi-Fi network.':''));filled=false;refresh();loadServers()}
   catch(e){msg($('bmsg'),'err',e.message)}
@@ -270,9 +309,7 @@ $('sdi').onclick=async()=>{
     msg($('bmsg'),'ok',done+(j.reconnecting?' The device is reconnecting to the restored Wi-Fi network.':''));filled=false;refresh();loadServers()}
   catch(e){msg($('bmsg'),'err',e.message)}
 };
-// Open on favorites when there are some, otherwise on A.
-api('/api/status').then(st=>{$('letter').value=st.favorites?'*':'A'}).catch(()=>{$('letter').value='A'}).finally(()=>loadServers());
-refresh();setInterval(refresh,2000);
+refresh();setInterval(()=>{if(unlocked)refresh()},2000);
 </script>
 </body>
 </html>

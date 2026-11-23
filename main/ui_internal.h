@@ -124,6 +124,7 @@ void ui_account_destroy(void);
 // Fills `label` with how to reach the web config right now (setup hotspot
 // and/or the device's IP); empty when neither is up.
 void ui_web_hint_update(lv_obj_t *label);
+void ui_web_access_show(void);
 void ui_chat_connect(const server_entry_t *entry);
 // The shared UI timer observes all QSO sources and updates Chat controls.
 void ui_chat_update(void);

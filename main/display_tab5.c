@@ -50,6 +50,7 @@ static const char *TAG = "display";
 #define ST_REPORT_LEN     7
 #define GT911_REG_STATUS  0x814E
 #define TOUCH_POLL_US     (15 * 1000)
+#define TOUCH_RELEASE_US  (250 * 1000)
 
 typedef enum { PANEL_ST7123, PANEL_ST7121, PANEL_ILI9881C } panel_kind_t;
 
@@ -123,11 +124,15 @@ static panel_kind_t panel_detect(void)
     return PANEL_ST7123;
 }
 
-static bool touch_poll(int32_t *x, int32_t *y)
+static bool touch_poll(int32_t *x, int32_t *y, bool *has_report)
 {
+    *has_report = true;
     if (s_touch_gt911) {
         uint8_t r[6];
-        if (touch_read(GT911_REG_STATUS, r, sizeof(r)) != ESP_OK || !(r[0] & 0x80)) return false;
+        if (touch_read(GT911_REG_STATUS, r, sizeof(r)) != ESP_OK || !(r[0] & 0x80)) {
+            *has_report = false;
+            return false;
+        }
         uint8_t clear[3] = {GT911_REG_STATUS >> 8, GT911_REG_STATUS & 0xff, 0};
         i2c_master_transmit(s_touch, clear, sizeof(clear), 50);
         if ((r[0] & 0x0F) == 0) return false;
@@ -157,16 +162,23 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     static int32_t last_x, last_y;
     static bool pressed;
-    static int64_t last_poll_us;
+    static int64_t last_poll_us, last_report_us;
 
     int64_t now = esp_timer_get_time();
     if (now - last_poll_us >= TOUCH_POLL_US) {
         last_poll_us = now;
         int32_t x, y;
-        pressed = touch_poll(&x, &y);
-        if (pressed) {
-            last_x = x < DISPLAY_H_RES ? x : DISPLAY_H_RES - 1;
-            last_y = y < DISPLAY_V_RES ? y : DISPLAY_V_RES - 1;
+        bool has_report;
+        bool next_pressed = touch_poll(&x, &y, &has_report);
+        if (has_report) {
+            pressed = next_pressed;
+            last_report_us = now;
+            if (pressed) {
+                last_x = x < DISPLAY_H_RES ? x : DISPLAY_H_RES - 1;
+                last_y = y < DISPLAY_V_RES ? y : DISPLAY_V_RES - 1;
+            }
+        } else if (now - last_report_us > TOUCH_RELEASE_US) {
+            pressed = false;
         }
     }
     data->point.x = last_x;

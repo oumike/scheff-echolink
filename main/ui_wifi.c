@@ -92,7 +92,10 @@ static void join_clicked(lv_event_t *e)
         return;
     }
     join_req_t *req = calloc(1, sizeof(*req));
-    if (!req) return;
+    if (!req) {
+        ui_modal_message("Not enough memory to connect. Try again.", UI_COLOR_STOP, true, NULL);
+        return;
+    }
     strlcpy(req->ssid, ssid, sizeof(req->ssid));
     strlcpy(req->pass, lv_textarea_get_text(s_pass), sizeof(req->pass));
     lv_obj_add_flag(s_kb, LV_OBJ_FLAG_HIDDEN);
@@ -100,7 +103,10 @@ static void join_clicked(lv_event_t *e)
     char msg[80];
     snprintf(msg, sizeof(msg), "Connecting to\n%s...", req->ssid);
     ui_modal_busy(msg);
-    ui_run_async("wifi_join", join_worker, req);
+    if (!ui_run_async("wifi_join", join_worker, req)) {
+        free(req);
+        ui_modal_message("Couldn't start Wi-Fi connection. Try again.", UI_COLOR_STOP, true, NULL);
+    }
 }
 
 // ---- scan screen -----------------------------------------------------------
@@ -180,7 +186,11 @@ static void start_scan(void)
     // Reopening setup can reuse a scan still running after Back.
     if (s_scanning) return;
     s_scanning = true;
-    ui_run_async("wifi_scan", scan_worker, NULL);
+    if (!ui_run_async("wifi_scan", scan_worker, NULL)) {
+        s_scanning = false;
+        s_ap_count = -1;
+        show_scan_results();
+    }
 }
 
 static void scan_back(lv_event_t *e)

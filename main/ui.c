@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -9,6 +10,7 @@
 #include "net_wifi.h"
 #include "onboard.h"
 #include "settings.h"
+#include "web_config.h"
 #include "ui_internal.h"
 
 static const char *TAG = "ui";
@@ -401,16 +403,18 @@ bool ui_run_async(const char *name, void (*fn)(void *), void *arg)
 
 // ---- boot ------------------------------------------------------------------
 
-void ui_web_hint_update(lv_obj_t *label)
+// Sets the label to how to reach the web config; returns whether it's reachable.
+static bool web_address_update(lv_obj_t *label)
 {
     char ip[16];
     bool sta = net_wifi_sta_ip(ip, sizeof(ip));
-    if (net_wifi_ap_active() && sta) {
+    bool ap = net_wifi_ap_active();
+    if (ap && sta) {
         lv_label_set_text_fmt(label,
                               LV_SYMBOL_SETTINGS " Or use a browser: open http://%s, or join Wi-Fi \"%s\" "
                               "and open http://192.168.4.1",
                               ip, net_wifi_ap_ssid());
-    } else if (net_wifi_ap_active()) {
+    } else if (ap) {
         lv_label_set_text_fmt(label,
                               LV_SYMBOL_SETTINGS " Or set up from a phone or computer: join Wi-Fi \"%s\", "
                               "then open http://192.168.4.1",
@@ -424,6 +428,29 @@ void ui_web_hint_update(lv_obj_t *label)
     } else {
         lv_label_set_text(label, "");
     }
+    return sta || ap;
+}
+
+void ui_web_hint_update(lv_obj_t *label)
+{
+    const char *code = web_config_access_code();
+    if (web_address_update(label) && code[0]) {
+        char hint[384];
+        snprintf(hint, sizeof(hint), "%s\nAccess code: %s", lv_label_get_text(label), code);
+        lv_label_set_text(label, hint);
+    }
+}
+
+void ui_web_access_show(void)
+{
+    lv_obj_t *box = modal_box();
+    const char *code = web_config_access_code();
+    if (web_address_update(modal_text(box, "", UI_COLOR_MUTED)) && code[0]) {
+        ui_label(box, "Access code", UI_FONT_SMALL, UI_COLOR_MUTED);
+        lv_obj_t *l = ui_label(box, code, UI_FONT_TITLE, lv_color_white());
+        lv_obj_set_style_text_letter_space(l, UI_GAP, 0);
+    }
+    ui_button(box, "OK", UI_COLOR_ACCENT, modal_ok, NULL);
 }
 
 // Onboarding: Wi-Fi, then the EchoLink account, then Home for good. Steps can

@@ -17,6 +17,7 @@ static unsigned host_ap_starts, host_saves, host_restarts, host_disconnects;
 static char host_join_ssid[33], host_join_pass[65];
 static net_join_result_t host_join_result = NET_JOIN_OK;
 
+const char *web_config_access_code(void) { return "89AB"; }
 static esp_err_t board_battery_percent(uint8_t *p) { *p = 75; return ESP_OK; }
 static void esp_restart(void) { ++host_restarts; }
 esp_err_t settings_save(void) { ++host_saves; return ESP_OK; }
@@ -152,6 +153,21 @@ class UIFlowsTest(unittest.TestCase):
         finally:
             directory.rmdir()
 
+    def test_web_access_code_is_reachable_from_account_without_saving_the_draft(self):
+        self.run_flow(r"""
+            lv_obj_t *home = boot_home();
+            host_click(home, "Edit");
+            host_fill(lv_layer_top(), "Your name (optional)", "Unsaved name");
+            host_click(lv_layer_top(), "Web access");
+            assert(host_text(lv_layer_top(), LV_SYMBOL_SETTINGS " Web config: http://192.0.2.1"));
+            assert(host_text(lv_layer_top(), "Access code"));
+            assert(host_text(lv_layer_top(), "89AB"));
+            host_click(lv_layer_top(), "OK");
+            assert(!strcmp(host_field(lv_layer_top(), "Your name (optional)")->text, "Unsaved name"));
+            host_click(lv_layer_top(), "Cancel");
+            assert(host_active == home && host_saves == 0);
+        """)
+
     def test_home_wifi_back_preserves_draft_across_settings_notifications(self):
         self.run_flow(r"""
             lv_obj_t *home = boot_home();
@@ -236,6 +252,29 @@ class UIFlowsTest(unittest.TestCase):
             assert(host_restarts == 1 && host_last_delay == 3000);
             assert(host_ap_starts == 0);
         """)
+
+    def test_wifi_worker_launch_failure_allows_retry(self):
+        for failure in ("host_fail_job_alloc", "host_fail_task_create"):
+            with self.subTest(failure=failure):
+                self.run_flow(r"""
+                    boot_home();
+                    host_click(host_active, "Wi-Fi");
+                    %s = true;
+                    host_click(host_active, "Scan for networks");
+                    assert(host_text(host_active, "Scan failed. Try again."));
+                    host_click(host_active, "Scan again");
+                    host_run_task("wifi_scan");
+                    assert(host_text(host_active, "Scanned network"));
+                    host_click(host_active, "Scanned network");
+                    %s = true;
+                    host_click(host_active, "Join");
+                    assert(host_text(lv_layer_top(), "Couldn't start Wi-Fi connection. Try again."));
+                    host_click(lv_layer_top(), "OK");
+                    host_click(host_active, "Join");
+                    host_run_task("wifi_join");
+                    host_tick(1000);
+                    assert(host_saves == 1 && !strcmp(host_join_ssid, "Scanned network"));
+                """ % (failure, failure))
 
     def test_first_boot_wifi_has_no_home_escape_and_advances_on_save(self):
         self.run_flow(r"""

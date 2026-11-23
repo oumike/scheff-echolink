@@ -29,7 +29,7 @@ $CLEAN && rm -rf "$BUILD_DIR"
 
 IMAGE=scheff-echolink-cp0-build
 docker build --quiet --platform linux/arm64 -t "$IMAGE" docker >/dev/null
-STEPS="cmake --preset cp0 && cmake --build $BUILD_DIR"
+STEPS="cmake --preset cp0 && cmake --build $BUILD_DIR && ctest --test-dir $BUILD_DIR --output-on-failure --no-tests=error"
 $DEB && STEPS="$STEPS && cd $BUILD_DIR && rm -f ./*.deb && cpack -G DEB"
 docker run --rm --platform linux/arm64 \
 	--user "$(id -u):$(id -g)" -e HOME=/tmp \

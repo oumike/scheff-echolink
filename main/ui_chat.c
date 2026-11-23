@@ -195,8 +195,12 @@ static void volume_event(lv_event_t *e)
         g_settings.volume = volume;
         audio_set_volume(volume);
         lv_label_set_text_fmt(s_volume_value, "%d%%", volume);
-    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        settings_save();
+    }
+    if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST ||
+        (UI_HW_KEYBOARD && code == LV_EVENT_VALUE_CHANGED)) {
+        if (settings_save() != ESP_OK) {
+            ui_modal_message("Couldn't save the volume setting.", UI_COLOR_STOP, true, NULL);
+        }
     }
 }
 

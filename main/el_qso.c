@@ -201,6 +201,16 @@ static void send_info(uint32_t ip)
 
 /* ---- state changes (call with q.lock held) ---- */
 
+static void set_peer(uint32_t ip, const char *call)
+{
+    q.remote_ip = ip;
+    strlcpy(q.remote_call, call, sizeof(q.remote_call));
+    q.remote_name[0] = 0;
+    q.end_reason[0] = 0;
+    q.info[0] = 0;
+    q.last_audio_us = 0;
+}
+
 static void set_idle(const char *why)
 {
     if (q.state == QSO_IDLE) return;
@@ -259,9 +269,7 @@ static void handle_ctrl(const uint8_t *buf, size_t len, uint32_t from)
         el_station_t st;
         bool known = el_dir_find_ip(from, &st);
         if (q.state == QSO_IDLE && g_settings.accept_incoming && known) {
-            q.remote_ip = from;
-            strlcpy(q.remote_call, st.call, sizeof(q.remote_call));
-            q.remote_name[0] = 0;
+            set_peer(from, st.call);
             parse_remote_name(buf, len);
             send_sdes(from);
             printf("\n*** Incoming connection from %s\n", q.remote_call);
@@ -428,11 +436,7 @@ esp_err_t el_qso_connect(const char *target)
         printf("Already connected; disconnect first\n");
         return ESP_ERR_INVALID_STATE;
     }
-    q.remote_ip = st.ip;
-    strlcpy(q.remote_call, st.call, sizeof(q.remote_call));
-    q.remote_name[0] = 0;
-    q.end_reason[0] = 0;
-    q.info[0] = 0;
+    set_peer(st.ip, st.call);
     q.state = QSO_CONNECTING;
     q.retries = 0;
     q.next_keepalive_us = esp_timer_get_time() + KEEPALIVE_US;
@@ -486,7 +490,8 @@ void el_qso_get_status(qso_status_t *out)
     strlcpy(out->remote_name, q.remote_name, sizeof(out->remote_name));
     out->remote_ip = q.remote_ip;
     out->ptt = q.ptt;
-    out->receiving = q.state == QSO_CONNECTED && esp_timer_get_time() - q.last_audio_us < RX_HOLD_US;
+    out->receiving = q.state == QSO_CONNECTED && q.last_audio_us > 0 &&
+                     esp_timer_get_time() - q.last_audio_us < RX_HOLD_US;
     out->rx_packets = q.rx_packets;
     out->tx_packets = q.tx_packets;
     strlcpy(out->end_reason, q.end_reason, sizeof(out->end_reason));

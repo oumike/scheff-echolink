@@ -39,6 +39,7 @@ static const char *TAG = "keys";
 #define KEY_FN_CP0     0x1d0
 #define QUIT_HOLD_MS   3000
 #define MAX_FOCUSABLE  128
+#define KEY_INPUT_RESET (KEY_MAX + 1)
 
 typedef struct {
     uint16_t code;
@@ -50,6 +51,19 @@ typedef struct {
 static pthread_mutex_t s_raw_mu = PTHREAD_MUTEX_INITIALIZER;
 static raw_key_t s_raw[128];
 static unsigned s_raw_head, s_raw_tail;
+
+static void raw_push(raw_key_t key)
+{
+    pthread_mutex_lock(&s_raw_mu);
+    bool overflow = s_raw_head - s_raw_tail == 128;
+    if (key.code == KEY_INPUT_RESET || overflow) {
+        s_raw_tail = s_raw_head;
+        key = (raw_key_t){.code = KEY_INPUT_RESET};
+    }
+    s_raw[s_raw_head++ % 128] = key;
+    pthread_mutex_unlock(&s_raw_mu);
+    if (overflow) ESP_LOGW(TAG, "keyboard queue overflow; releasing keys");
+}
 
 // ---- evdev thread ----------------------------------------------------------
 
@@ -67,6 +81,7 @@ static bool has_key_a(int fd)
 typedef struct {
     int fd;
     char path[32];
+    bool sync_lost;
 } kbd_t;
 
 static void scan_keyboards(kbd_t *k, int *n)
@@ -87,6 +102,7 @@ static void scan_keyboards(kbd_t *k, int *n)
         ioctl(fd, EVIOCGNAME(sizeof(name)), name);
         ESP_LOGI(TAG, "keyboard %s (%s)", path, name);
         k[*n].fd = fd;
+        k[*n].sync_lost = false;
         snprintf(k[*n].path, sizeof(k[*n].path), "%s", path);
         (*n)++;
     }
@@ -131,23 +147,30 @@ static void *reader(void *arg)
         for (int i = 0; i < n; i++) p[i] = (struct pollfd){kbd[i].fd, POLLIN, 0};
         if (n < 1 || n > MAX_KEYBOARDS || poll(p, (nfds_t)n, 500) <= 0) continue;
         for (int d = 0; d < n; d++) {
-            if (!(p[d].revents & (POLLIN | POLLERR | POLLHUP))) continue;
+            if (!(p[d].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL))) continue;
             struct input_event ev[16];
             ssize_t r = read(kbd[d].fd, ev, sizeof(ev));
-            if (r < 0) {
-                if (errno == EAGAIN || errno == EINTR) continue;
+            if (r <= 0) {
+                if (r < 0 && (errno == EAGAIN || errno == EINTR)) continue;
                 ESP_LOGI(TAG, "keyboard %s gone", kbd[d].path);
+                raw_push((raw_key_t){.code = KEY_INPUT_RESET});
                 close(kbd[d].fd);
                 kbd[d] = kbd[--n];
                 break;  // p[] no longer matches kbd[]
             }
             for (size_t i = 0; i < (size_t)r / sizeof(ev[0]); i++) {
-                if (ev[i].type != EV_KEY || ev[i].value > 1) continue;  // LVGL repeats held keys itself
+                if (ev[i].type == EV_SYN && ev[i].code == SYN_DROPPED) {
+                    ESP_LOGW(TAG, "keyboard %s lost event synchronization; releasing keys", kbd[d].path);
+                    kbd[d].sync_lost = true;
+                    raw_push((raw_key_t){.code = KEY_INPUT_RESET});
+                } else if (ev[i].type == EV_SYN && ev[i].code == SYN_REPORT) {
+                    kbd[d].sync_lost = false;
+                }
+                if (kbd[d].sync_lost || ev[i].type != EV_KEY || ev[i].code > KEY_MAX ||
+                    ev[i].value < 0 || ev[i].value > 1) continue;  // LVGL repeats held keys itself
                 raw_key_t k = {.code = ev[i].code, .value = ev[i].value, .ms = cp0_millis()};
                 if (k.value == 1 && k.code >= KEY_Q && k.code <= KEY_M) k.shift = sticky_shift();
-                pthread_mutex_lock(&s_raw_mu);
-                if (s_raw_head - s_raw_tail < 128) s_raw[s_raw_head++ % 128] = k;
-                pthread_mutex_unlock(&s_raw_mu);
+                raw_push(k);
             }
         }
     }
@@ -393,6 +416,7 @@ static bool button_text_is(lv_obj_t *b, const char *want, bool suffix)
 // up is a deliberate choice.
 static void back_async(void *arg)
 {
+    refresh_group();
     lv_obj_t *f = focused();
     if (is_type(f, &lv_dropdown_class) && lv_dropdown_is_open(f)) {
         lv_dropdown_close(f);
@@ -515,6 +539,14 @@ static void handle(const raw_key_t *k)
 {
     bool down = k->value == 1;
     switch (k->code) {
+    case KEY_INPUT_RESET:
+        if (s_cur_state == LV_INDEV_STATE_PRESSED) out_push(s_cur_key, LV_INDEV_STATE_RELEASED);
+        s_cur_state = LV_INDEV_STATE_RELEASED;
+        memset(s_held, 0, sizeof(s_held));
+        s_shift_l = s_shift_r = s_sym_down = s_fn = s_esc = false;
+        s_ptt = false;
+        el_qso_set_ptt(false);
+        return;
     case KEY_LEFTSHIFT: s_shift_l = down; return;
     case KEY_RIGHTSHIFT: s_shift_r = down; return;
     case KEY_COMPOSE: s_sym_down = down; return;
@@ -544,7 +576,6 @@ static void handle(const raw_key_t *k)
 
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    if (s_esc && cp0_millis() - s_esc_ms >= QUIT_HOLD_MS) cp0_request_quit();
     raw_key_t k;
     while (s_out_head == s_out_tail && raw_pop(&k)) handle(&k);
 
@@ -552,11 +583,15 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         out_key_t o = s_out[s_out_tail++ % 32];
         data->key = o.key;
         data->state = o.state;
-        data->continue_reading = s_out_head != s_out_tail;
     } else {
         data->key = s_cur_key;
         data->state = s_cur_state;
     }
+    pthread_mutex_lock(&s_raw_mu);
+    bool pending = s_raw_tail != s_raw_head;
+    pthread_mutex_unlock(&s_raw_mu);
+    data->continue_reading = pending || s_out_head != s_out_tail;
+    if (!pending && s_esc && cp0_millis() - s_esc_ms >= QUIT_HOLD_MS) cp0_request_quit();
 }
 
 // ---- focus ring ------------------------------------------------------------

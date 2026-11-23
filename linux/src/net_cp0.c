@@ -26,7 +26,11 @@ esp_err_t net_wifi_init(void)
 
 esp_err_t net_wifi_connect(const char *ssid, const char *pass)
 {
-    return ESP_OK;
+    if (!ssid || !ssid[0] || strlen(ssid) > 32 || (pass && strlen(pass) > 64)) {
+        ESP_LOGE(TAG, "invalid Wi-Fi credentials");
+        return ESP_ERR_INVALID_ARG;
+    }
+    return net_wifi_join(ssid, pass, 20000) == NET_JOIN_OK ? ESP_OK : ESP_FAIL;
 }
 
 // The first non-loopback IPv4 address, preferring wlan*.

@@ -91,6 +91,11 @@ static void cancel_clicked(lv_event_t *e)
     ui_account_destroy();
 }
 
+static void web_clicked(lv_event_t *e)
+{
+    ui_web_access_show();
+}
+
 static lv_obj_t *spacer(lv_obj_t *col)
 {
     lv_obj_t *sp = lv_obj_create(col);
@@ -113,6 +118,7 @@ void ui_account_onboard(void)
              "Enter the callsign and password you use with EchoLink. The callsign must already be validated "
              "at echolink.org.",
              UI_FONT_SMALL, UI_COLOR_MUTED);
+    ui_button(col, "Web access", UI_COLOR_PANEL, web_clicked, NULL);
     build_fields(col, kb);
     spacer(col);
     ui_button(col, "Continue", UI_COLOR_GO, save_clicked, NULL);
@@ -130,6 +136,7 @@ void ui_account_edit(void)
     ui_title(col, "EchoLink Account");
     ui_label(col, "Changes take effect right away: the device logs in to the directory again.", UI_FONT_SMALL,
              UI_COLOR_MUTED);
+    ui_button(col, "Web access", UI_COLOR_PANEL, web_clicked, NULL);
     build_fields(col, kb);
     spacer(col);
     ui_button(col, LV_SYMBOL_SAVE "  Save", UI_COLOR_GO, save_clicked, NULL);
