@@ -441,9 +441,7 @@ void ui_home_show(void)
         s_entries = heap_caps_calloc(BUCKET_MAX, sizeof(*s_entries), MALLOC_CAP_SPIRAM);
 
         lv_obj_t *col = ui_screen_create(&s_scr, &s_kb);
-    #if !UI_COMPACT
-        lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
-    #endif
+        if (!UI_COMPACT) lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
 
         // Callsign header with account and Wi-Fi settings underneath (beside
         // it on the short CardputerZero screen).
@@ -460,7 +458,7 @@ void ui_home_show(void)
         lv_obj_remove_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
     #if UI_HW_KEYBOARD
         lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_right(actions, UI_STATUS_BAR_W - UI_PAD, 0);
+        lv_obj_set_style_pad_right(actions, LV_MAX(UI_STATUS_BAR_W - UI_PAD, 0), 0);
         s_callsign = ui_title(actions, "");
         lv_obj_set_flex_grow(s_callsign, 1);
     #endif
@@ -522,11 +520,8 @@ void ui_home_show(void)
 
         s_list = lv_obj_create(col);
         lv_obj_set_width(s_list, LV_PCT(100));
-    #if UI_COMPACT
-        lv_obj_set_height(s_list, UI_COMPACT_LIST_H);
-    #else
-        lv_obj_set_flex_grow(s_list, 1);
-    #endif
+        if (UI_COMPACT) lv_obj_set_height(s_list, UI_COMPACT_LIST_H);
+        else lv_obj_set_flex_grow(s_list, 1);
         lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_all(s_list, 0, 0);
         lv_obj_set_style_pad_row(s_list, UI_GAP / 2, 0);

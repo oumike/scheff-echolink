@@ -144,6 +144,15 @@ Keys:
 - The web config listens on port **8573** (not 80/8080, to stay clear of other
   apps): `http://<device-ip>:8573/`.
 - Only one copy runs at a time.
+- Started from a desktop session it opens a window instead of drawing on the
+  LCD (`SCHEFF_DISPLAY=window|lcd` overrides the choice), and the package adds
+  it to the desktop's menu. In a window it is a desktop app: the window
+  resizes (the layout reflows and fills it) and remembers its size and
+  position (`window.conf` in `~/.local/share/scheff-echolink`). The mouse
+  clicks, scrolls with the wheel and highlights what it is over. A regular
+  keyboard types as usual: hold Space to talk, Esc goes back, Tab/arrows
+  move, Ctrl/Cmd+V pastes, F11 toggles fullscreen and Ctrl/Cmd+Q (or closing
+  the window) quits. The header leaves Wi-Fi and battery to the desktop.
 
 Build (Docker; Apple Silicon and arm64 Linux run it natively, x86 needs QEMU):
 

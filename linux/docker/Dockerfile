@@ -7,5 +7,5 @@ FROM debian:trixie
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential ca-certificates cmake ninja-build pkg-config file \
-      libpulse-dev libexpat1-dev libcjson-dev python3 \
+      libpulse-dev libexpat1-dev libcjson-dev libsdl2-dev python3 \
  && rm -rf /var/lib/apt/lists/*

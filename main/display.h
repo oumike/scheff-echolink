@@ -6,9 +6,15 @@
 #include "esp_err.h"
 
 #if CONFIG_EL_BOARD_CARDPUTER_ZERO
-// ST7789V 1.9" LCD in landscape, as the Linux framebuffer shows it.
-#define DISPLAY_H_RES 320
-#define DISPLAY_V_RES 170
+// ST7789V 1.9" LCD in landscape, as the Linux framebuffer shows it, or a
+// desktop window of any size (linux/src/display_cp0.c).
+#define DISPLAY_LCD_H_RES 320
+#define DISPLAY_LCD_V_RES 170
+int32_t display_h_res(void);
+int32_t display_v_res(void);
+bool display_windowed(void);
+#define DISPLAY_H_RES display_h_res()
+#define DISPLAY_V_RES display_v_res()
 #elif CONFIG_IDF_TARGET_ESP32S3
 #define DISPLAY_H_RES 320
 #define DISPLAY_V_RES 240

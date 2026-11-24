@@ -9,6 +9,7 @@ from host_harness import COMMON, ROOT, function, header, implementation, run_c
 def controls_program():
     return COMMON + r"""
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <poll.h>
@@ -23,6 +24,7 @@ static jmp_buf reader_done;
 static lv_indev_t *keypad;
 static void drain_keys(void);
 uint32_t cp0_millis(void) { return now_ms; }
+bool cp0_windowed(void) { return false; }
 void cp0_request_quit(void) { quits++; }
 void el_qso_set_ptt(bool on) { transmitting = on; }
 static int keyboard_open(const char *path, int flags, ...) {

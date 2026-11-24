@@ -282,9 +282,7 @@ static void chat_show(void)
     s_peer_ip = 0;
 
     lv_obj_t *col = ui_screen_create(&s_scr, NULL);
-#if !UI_COMPACT
-    lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
-#endif
+    if (!UI_COMPACT) lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
 
     s_title = ui_title(col, "");
     s_name = ui_label(col, "", UI_FONT, lv_color_white());
@@ -293,11 +291,8 @@ static void chat_show(void)
     // Station info the remote sends on connect (users, location, ...).
     lv_obj_t *box = lv_obj_create(col);
     lv_obj_set_width(box, LV_PCT(100));
-#if UI_COMPACT
-    lv_obj_set_height(box, UI_COMPACT_INFO_H);
-#else
-    lv_obj_set_flex_grow(box, 1);
-#endif
+    if (UI_COMPACT) lv_obj_set_height(box, UI_COMPACT_INFO_H);
+    else lv_obj_set_flex_grow(box, 1);
     lv_obj_set_style_bg_color(box, UI_COLOR_PANEL, 0);
     lv_obj_set_style_border_width(box, 0, 0);
     lv_obj_set_style_radius(box, UI_RADIUS, 0);

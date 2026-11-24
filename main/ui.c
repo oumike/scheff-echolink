@@ -95,6 +95,7 @@ static void status_ensure(void)
         lv_obj_set_style_text_color(s_battery_icon, UI_COLOR_MUTED, 0);
 
         lv_obj_align(s_status_bar, LV_ALIGN_TOP_RIGHT, -UI_PAD, UI_SAFE_TOP + UI_PAD);
+        if (UI_DESKTOP) lv_obj_add_flag(s_status_bar, LV_OBJ_FLAG_HIDDEN);
         status_update(NULL);
         lv_timer_create(ui_tick, UI_REFRESH_MS, NULL);
     }
@@ -275,7 +276,12 @@ static lv_obj_t *modal_box(void)
     lv_obj_remove_flag(s_modal, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *box = lv_obj_create(s_modal);
-    lv_obj_set_size(box, DISPLAY_H_RES - 4 * UI_PAD, LV_SIZE_CONTENT);
+    if (UI_DESKTOP) {
+        lv_obj_set_size(box, LV_PCT(90), LV_SIZE_CONTENT);
+        lv_obj_set_style_max_width(box, 560, 0);
+    } else {
+        lv_obj_set_size(box, DISPLAY_H_RES - 4 * UI_PAD, LV_SIZE_CONTENT);
+    }
     lv_obj_center(box);
     lv_obj_set_style_bg_color(box, UI_COLOR_PANEL, 0);
     lv_obj_set_style_radius(box, UI_RADIUS * 2, 0);
@@ -284,8 +290,9 @@ static lv_obj_t *modal_box(void)
     lv_obj_set_style_pad_row(box, UI_GAP * 2, 0);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-#if UI_COMPACT && UI_HW_KEYBOARD
-    // Too short for a tall menu: scroll, and let the focus bring buttons in.
+#if UI_HW_KEYBOARD
+    // Too short for a tall menu (the LCD, a small window): scroll, and let the
+    // focus bring buttons in.
     lv_obj_set_style_max_height(box, DISPLAY_V_RES - 2 * UI_PAD, 0);
 #else
     lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);

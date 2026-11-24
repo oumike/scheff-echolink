@@ -1,7 +1,7 @@
 # The M5Stack CardputerZero build: main/'s portable EchoLink client, UI and
 # web config over compat/ (the ESP-IDF and FreeRTOS calls they make, on
-# POSIX), with src/'s Linux board, display, keyboard, audio and network in
-# place of the ESP32 ones. Built in docker/'s Debian trixie arm64 container by
+# POSIX), with src/'s Linux board, display (the LCD or a desktop window),
+# keyboard, audio and network in place of the ESP32 ones. Built in docker/'s Debian trixie arm64 container by
 # scripts/build-cardputer-zero.sh; see docs/cardputer-zero.md.
 cmake_minimum_required(VERSION 3.25)
 project(scheff_echolink LANGUAGES C CXX ASM)
@@ -66,6 +66,7 @@ add_executable(scheff-echolink
   src/main.c
   src/board_cp0.c
   src/display_cp0.c
+  src/sdl_window.c
   src/keys_cp0.c
   src/audio_cp0.c
   src/net_cp0.c
@@ -82,7 +83,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse libpulse-simple)
 pkg_check_modules(EXPAT REQUIRED IMPORTED_TARGET expat)
 pkg_check_modules(CJSON REQUIRED IMPORTED_TARGET libcjson)
-target_link_libraries(scheff-echolink PRIVATE lvgl gsm el_compat PkgConfig::PULSE PkgConfig::EXPAT
+pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+target_link_libraries(scheff-echolink PRIVATE lvgl gsm el_compat PkgConfig::PULSE PkgConfig::EXPAT PkgConfig::SDL2
   PkgConfig::CJSON m)
 
 enable_testing()
@@ -100,6 +102,11 @@ add_test(NAME linux-controls COMMAND "${CMAKE_COMMAND}" -E env
 install(TARGETS scheff-echolink RUNTIME DESTINATION share/APPLaunch/bin)
 install(FILES packaging/scheff-echolink.desktop DESTINATION share/APPLaunch/applications)
 install(FILES packaging/icon.png DESTINATION share/APPLaunch/share/images RENAME scheff-echolink.png)
+# The desktop session's menu entry and its icon; the app copies the entry to
+# ~/.local/share/applications at each start.
+install(FILES packaging/scheff-echolink-desktop.desktop DESTINATION share/scheff-echolink
+  RENAME scheff-echolink.desktop)
+install(FILES packaging/icon.png DESTINATION share/scheff-echolink RENAME scheff-echolink.png)
 install(FILES packaging/copyright DESTINATION share/doc/scheff-echolink)
 
 set(CPACK_GENERATOR DEB)
@@ -115,6 +122,6 @@ set(CPACK_DEBIAN_PACKAGE_DESCRIPTION
 set(CPACK_DEBIAN_PACKAGE_SECTION APPLaunch)
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE arm64)
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/oumike/scheff-echolink")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libpulse0, libexpat1, libcjson1")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libpulse0, libexpat1, libcjson1, libsdl2-2.0-0 (>= 2.26)")
 set(CPACK_STRIP_FILES ON)
 include(CPack)

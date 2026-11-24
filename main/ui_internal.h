@@ -12,30 +12,35 @@
 
 #if CONFIG_EL_BOARD_CARDPUTER_ZERO
 // 320x170 with a full keyboard: arrows/Tab move the focus, Enter presses,
-// Esc goes back (linux/src/keys_cp0.c), so no on-screen keyboard.
-#define UI_COMPACT          1
+// Esc goes back (linux/src/keys_cp0.c), so no on-screen keyboard. In a
+// desktop window (decided at start) the layout fills the window, at desktop
+// sizes, with the mouse too.
+#define UI_DESKTOP          display_windowed()
+#define UI_DESK(desktop, lcd) (UI_DESKTOP ? (desktop) : (lcd))
+#define UI_COMPACT          (!UI_DESKTOP)
 #define UI_HW_KEYBOARD      1
-#define UI_PAD              4
-#define UI_GAP              3
-#define UI_BTN_H            26
-#define UI_FIELD_H          26
-#define UI_RADIUS           4
-#define UI_SAFE_TOP         2
+#define UI_PAD              UI_DESK(8, 4)
+#define UI_GAP              UI_DESK(8, 3)
+#define UI_BTN_H            UI_DESK(44, 26)
+#define UI_FIELD_H          UI_DESK(40, 26)
+#define UI_RADIUS           UI_DESK(8, 4)
+#define UI_SAFE_TOP         UI_DESK(0, 2)
 #define UI_SAFE_BOTTOM      0
-#define UI_FONT_SMALL       (&lv_font_montserrat_12)
-#define UI_FONT             (&lv_font_montserrat_14)
-#define UI_FONT_TITLE       (&lv_font_montserrat_16)
-#define UI_STATUS_BAR_W     72
-#define UI_STATUS_BAR_H     20
-#define UI_SPINNER_SIZE     32
-#define UI_ICON_BUTTON_SIZE 26
-#define UI_EDIT_BUTTON_H    24
-#define UI_CLEAR_BUTTON_W   30
-#define UI_CHAT_TALK_H      40
-#define UI_SLIDER_H         12
-#define UI_VOLUME_VALUE_W   40
+#define UI_FONT_SMALL       UI_DESK(&lv_font_montserrat_16, &lv_font_montserrat_12)
+#define UI_FONT             UI_DESK(&lv_font_montserrat_20, &lv_font_montserrat_14)
+#define UI_FONT_TITLE       UI_DESK(&lv_font_montserrat_28, &lv_font_montserrat_16)
+// A window leaves Wi-Fi and battery to the desktop around it.
+#define UI_STATUS_BAR_W     UI_DESK(0, 72)
+#define UI_STATUS_BAR_H     UI_DESK(32, 20)
+#define UI_SPINNER_SIZE     UI_DESK(48, 32)
+#define UI_ICON_BUTTON_SIZE UI_DESK(40, 26)
+#define UI_EDIT_BUTTON_H    UI_DESK(36, 24)
+#define UI_CLEAR_BUTTON_W   UI_DESK(40, 30)
+#define UI_CHAT_TALK_H      UI_DESK(70, 40)
+#define UI_SLIDER_H         UI_DESK(16, 12)
+#define UI_VOLUME_VALUE_W   UI_DESK(52, 40)
 #define UI_COMPACT_LIST_H   86
-#define UI_LETTER_W         64
+#define UI_LETTER_W         UI_DESK(90, 64)
 #define UI_COMPACT_INFO_H   36
 #elif CONFIG_IDF_TARGET_ESP32S3
 #define UI_COMPACT          1
@@ -95,6 +100,9 @@
 
 #ifndef UI_HW_KEYBOARD
 #define UI_HW_KEYBOARD 0
+#endif
+#ifndef UI_DESKTOP
+#define UI_DESKTOP 0
 #endif
 
 #define UI_COLOR_BG      lv_color_hex(0x000000)

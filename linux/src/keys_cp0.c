@@ -15,9 +15,15 @@
 //   Esc held 3 s        quit (the launcher sends SIGINT for this too)
 // USB keyboards work too. The launcher keeps reading the keyboard while we
 // run, so nothing is grabbed.
+//
+// In a desktop window only the built-in keyboard is read here, grabbed while
+// the window has focus so the desktop doesn't get its keys too. The desktop's
+// own keyboards arrive through SDL (sdl_window.c), already laid out:
+// cp0_keys_tap(), cp0_keys_space() and cp0_keys_char().
 
 #include <dirent.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <poll.h>
@@ -40,13 +46,17 @@ static const char *TAG = "keys";
 #define QUIT_HOLD_MS   3000
 #define MAX_FOCUSABLE  128
 #define KEY_INPUT_RESET (KEY_MAX + 1)
+#define BUILTIN_NAME    "tca8418"
 
 typedef struct {
     uint16_t code;
     uint8_t value;   // 1 down, 0 up
     uint8_t shift;   // the driver's one-shot or locked shift, at a press
+    char ch;         // a character typed on a desktop keyboard (code unused)
     uint32_t ms;
 } raw_key_t;
+
+static atomic_bool s_focused;
 
 static pthread_mutex_t s_raw_mu = PTHREAD_MUTEX_INITIALIZER;
 static raw_key_t s_raw[128];
@@ -82,6 +92,7 @@ typedef struct {
     int fd;
     char path[32];
     bool sync_lost;
+    bool grabbed;
 } kbd_t;
 
 static void scan_keyboards(kbd_t *k, int *n)
@@ -100,9 +111,14 @@ static void scan_keyboards(kbd_t *k, int *n)
         }
         char name[64] = "?";
         ioctl(fd, EVIOCGNAME(sizeof(name)), name);
+        if (cp0_windowed() && !strstr(name, BUILTIN_NAME)) {
+            close(fd);  // the desktop's, which SDL brings
+            continue;
+        }
         ESP_LOGI(TAG, "keyboard %s (%s)", path, name);
         k[*n].fd = fd;
         k[*n].sync_lost = false;
+        k[*n].grabbed = false;
         snprintf(k[*n].path, sizeof(k[*n].path), "%s", path);
         (*n)++;
     }
@@ -143,9 +159,15 @@ static void *reader(void *arg)
                 continue;
             }
         }
+        bool focused = atomic_load(&s_focused);
+        for (int i = 0; cp0_windowed() && i < n; i++) {
+            if (kbd[i].grabbed == focused) continue;
+            if (ioctl(kbd[i].fd, EVIOCGRAB, focused ? 1 : 0) == 0 || !focused) kbd[i].grabbed = focused;
+            if (!focused) raw_push((raw_key_t){.code = KEY_INPUT_RESET});
+        }
         struct pollfd p[MAX_KEYBOARDS];
         for (int i = 0; i < n; i++) p[i] = (struct pollfd){kbd[i].fd, POLLIN, 0};
-        if (n < 1 || n > MAX_KEYBOARDS || poll(p, (nfds_t)n, 500) <= 0) continue;
+        if (n < 1 || n > MAX_KEYBOARDS || poll(p, (nfds_t)n, cp0_windowed() ? 100 : 500) <= 0) continue;
         for (int d = 0; d < n; d++) {
             if (!(p[d].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL))) continue;
             struct input_event ev[16];
@@ -168,6 +190,7 @@ static void *reader(void *arg)
                 }
                 if (kbd[d].sync_lost || ev[i].type != EV_KEY || ev[i].code > KEY_MAX ||
                     ev[i].value < 0 || ev[i].value > 1) continue;  // LVGL repeats held keys itself
+                if (cp0_windowed() && !kbd[d].grabbed) continue;  // the desktop has these
                 raw_key_t k = {.code = ev[i].code, .value = ev[i].value, .ms = cp0_millis()};
                 if (k.value == 1 && k.code >= KEY_Q && k.code <= KEY_M) k.shift = sticky_shift();
                 raw_push(k);
@@ -512,6 +535,9 @@ static void key_down(const raw_key_t *k)
         if (in_text) press(k->code, k->code == KEY_DELETE ? LV_KEY_DEL : LV_KEY_BACKSPACE);
         else lv_async_call(back_async, NULL);
         return;
+    case KEY_HOME: case KEY_END:
+        if (in_text) press(k->code, k->code == KEY_HOME ? LV_KEY_HOME : LV_KEY_END);
+        return;
     case KEY_SPACE:
         if (in_text) {
             press(k->code, ' ');
@@ -535,8 +561,26 @@ static void key_down(const raw_key_t *k)
     press(k->code, (uint32_t)(unsigned char)c);
 }
 
+// A character from a desktop keyboard: typed as is, into the first text
+// field if none has focus.
+static void type_char(char c)
+{
+    refresh_group();
+    if (!is_type(focused(), &lv_textarea_class)) {
+        lv_obj_t *ta = c == ' ' ? NULL : first_textarea();
+        if (!ta) return;
+        lv_group_focus_obj(ta);
+    }
+    press(KEY_RESERVED, (uint32_t)(unsigned char)c);
+    release(KEY_RESERVED);
+}
+
 static void handle(const raw_key_t *k)
 {
+    if (k->ch) {
+        type_char(k->ch);
+        return;
+    }
     bool down = k->value == 1;
     switch (k->code) {
     case KEY_INPUT_RESET:
@@ -621,6 +665,30 @@ static void focus_ring(lv_display_t *disp)
     lv_theme_set_parent(&s_theme, base);
     lv_theme_set_apply_cb(&s_theme, theme_apply);
     lv_display_set_theme(disp, &s_theme);
+}
+
+// ---- desktop keyboards (window mode) -------------------------------------------
+
+void cp0_keys_set_focus(bool focused)
+{
+    atomic_store(&s_focused, focused);
+}
+
+void cp0_keys_tap(uint16_t code, bool shift)
+{
+    uint32_t ms = cp0_millis();
+    raw_push((raw_key_t){.code = code, .value = 1, .shift = shift, .ms = ms});
+    raw_push((raw_key_t){.code = code, .value = 0, .ms = ms});
+}
+
+void cp0_keys_space(bool down)
+{
+    raw_push((raw_key_t){.code = KEY_SPACE, .value = down, .ms = cp0_millis()});
+}
+
+void cp0_keys_char(char c)
+{
+    if (c >= 0x20 && c < 0x7f) raw_push((raw_key_t){.ch = c, .ms = cp0_millis()});
 }
 
 void cp0_keys_start(lv_display_t *disp)
