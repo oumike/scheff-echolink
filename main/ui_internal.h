@@ -104,6 +104,13 @@
 #ifndef UI_DESKTOP
 #define UI_DESKTOP 0
 #endif
+// Only read when UI_COMPACT, which boards without them never are.
+#ifndef UI_COMPACT_LIST_H
+#define UI_COMPACT_LIST_H 0
+#endif
+#ifndef UI_COMPACT_INFO_H
+#define UI_COMPACT_INFO_H 0
+#endif
 
 #define UI_COLOR_BG      lv_color_hex(0x000000)
 #define UI_COLOR_PANEL   lv_color_hex(0x1a1d23)
