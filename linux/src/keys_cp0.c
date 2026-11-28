@@ -12,7 +12,8 @@
 //                       open dropdown (Backspace edits in a text field)
 //   letters, digits     type, into the first text field if none has focus
 //   Space               hold to talk, unless typing
-//   Esc held 3 s        quit (the launcher sends SIGINT for this too)
+//   Esc held 3 s        quit, counted down on screen (the launcher ends
+//                       the app then too)
 // USB keyboards work too. The launcher keeps reading the keyboard while we
 // run, so nothing is grabbed.
 //
@@ -618,6 +619,63 @@ static void handle(const raw_key_t *k)
     else release(k->code);
 }
 
+// Holding Esc quits (the launcher ends the app at the same moment): a ring
+// on the system layer fills as it's held, around the seconds left. It waits a
+// moment first, so a tap to go back doesn't flash it.
+#define QUIT_HINT_MS 300
+static lv_obj_t *s_quit_panel, *s_quit_arc, *s_quit_count;
+
+static void quit_hold_show(uint32_t held_ms)
+{
+    if (held_ms < QUIT_HINT_MS) {
+        if (s_quit_panel) lv_obj_delete(s_quit_panel);
+        s_quit_panel = NULL;
+        return;
+    }
+    if (!s_quit_panel) {
+        lv_obj_t *p = lv_obj_create(lv_layer_sys());
+        lv_obj_remove_style_all(p);
+        lv_obj_set_size(p, 128, 128);
+        lv_obj_center(p);
+        lv_obj_set_style_bg_color(p, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(p, LV_OPA_80, 0);
+        lv_obj_set_style_radius(p, LV_RADIUS_CIRCLE, 0);
+        lv_obj_remove_flag(p, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *arc = lv_arc_create(p);
+        lv_obj_set_size(arc, 112, 112);
+        lv_obj_center(arc);
+        lv_arc_set_rotation(arc, 270);
+        lv_arc_set_bg_angles(arc, 0, 360);
+        lv_arc_set_range(arc, 0, QUIT_HOLD_MS);
+        lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+        lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(arc, 10, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(arc, 10, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(arc, lv_color_hex(0x3a3a3a), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(arc, lv_color_hex(0xd23c3c), LV_PART_INDICATOR);
+
+        lv_obj_t *count = lv_label_create(p);
+        lv_obj_set_style_text_font(count, &lv_font_montserrat_28, 0);
+        lv_obj_set_style_text_color(count, lv_color_hex(0xffffff), 0);
+        lv_obj_align(count, LV_ALIGN_CENTER, 0, -8);
+
+        lv_obj_t *what = lv_label_create(p);
+        lv_label_set_text(what, "Quit");
+        lv_obj_set_style_text_font(what, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(what, lv_color_hex(0xbbbbbb), 0);
+        lv_obj_align(what, LV_ALIGN_CENTER, 0, 18);
+
+        s_quit_panel = p;
+        s_quit_arc = arc;
+        s_quit_count = count;
+    }
+    if (held_ms > QUIT_HOLD_MS) held_ms = QUIT_HOLD_MS;
+    unsigned tenths = (QUIT_HOLD_MS - held_ms + 99) / 100;
+    lv_arc_set_value(s_quit_arc, (int32_t)held_ms);
+    lv_label_set_text_fmt(s_quit_count, "%u.%u", tenths / 10, tenths % 10);
+}
+
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     raw_key_t k;
@@ -635,7 +693,9 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     bool pending = s_raw_tail != s_raw_head;
     pthread_mutex_unlock(&s_raw_mu);
     data->continue_reading = pending || s_out_head != s_out_tail;
-    if (!pending && s_esc && cp0_millis() - s_esc_ms >= QUIT_HOLD_MS) cp0_request_quit();
+    uint32_t esc_held = s_esc ? cp0_millis() - s_esc_ms : 0;
+    if (!pending && esc_held >= QUIT_HOLD_MS) cp0_request_quit();
+    quit_hold_show(esc_held);
 }
 
 // ---- focus ring ------------------------------------------------------------

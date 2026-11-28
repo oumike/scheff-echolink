@@ -217,6 +217,27 @@ int main(void) {
 }
 """)
 
+    def test_escape_hold_shows_a_countdown_ring_until_released(self):
+        self.run_controls(r"""
+int main(void) {
+    setup();
+    button(lv_screen_active(), "Back");
+    key(KEY_ESC, true);
+    now_ms += 299;
+    drain_keys();
+    assert(!s_quit_panel);
+    now_ms += 1001;
+    drain_keys();
+    assert(s_quit_panel && lv_obj_get_parent(s_quit_panel) == lv_layer_sys());
+    assert(lv_arc_get_value(s_quit_arc) == 1300);
+    assert(!strcmp(lv_label_get_text(s_quit_count), "1.7"));
+    key(KEY_ESC, false);
+    assert(!s_quit_panel && !lv_obj_get_child_count(lv_layer_sys()) && !quits);
+    lv_async_call_cancel(back_async, NULL);
+    lv_deinit();
+}
+""")
+
     def test_arrow_key_volume_changes_are_persisted_without_a_release_event(self):
         self.run_controls(header("main/settings.h") + r"""
 #define UI_HW_KEYBOARD 1

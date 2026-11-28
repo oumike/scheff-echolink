@@ -136,7 +136,7 @@ Keys:
 | Hold **Space** | Talk (in a QSO) |
 | Arrows, Enter | Move between controls, press |
 | **Esc** | Back |
-| Hold **Esc** 3 s | Quit |
+| Hold **Esc** 3 s | Quit (a ring counts it down on screen) |
 
 - A USB headset (or USB sound card) is used automatically while it's plugged
   in; otherwise the built-in speaker and microphone. The volume slider sets
